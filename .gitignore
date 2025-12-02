@@ -5,5 +5,7 @@
 /main-app/human-rpc-app/README.md
 /main-app/human-rpc-app/.env
 /main-app/human-rpc-app/.env.local
-main-app/human-rpc-app/.next/dev
-main-app/human-rpc-app/public
+/main-app/human-rpc-app/.next/dev
+/main-app/human-rpc-app/public
+/test-agent/.env
+/test-agent/.env.local

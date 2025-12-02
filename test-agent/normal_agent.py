@@ -7,20 +7,11 @@ This baseline agent often fails on sarcasm detection.
 import json
 import os
 from dotenv import load_dotenv
-from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
-from langchain.output_parsers import PydanticOutputParser
-from pydantic import BaseModel, Field
+import google.generativeai as genai
 
 
 # Load environment variables
 load_dotenv()
-
-
-class SentimentAnalysis(BaseModel):
-    """Structured output for sentiment analysis."""
-    sentiment: str = Field(description="Either 'POSITIVE' or 'NEGATIVE'")
-    confidence: float = Field(description="Confidence score between 0.0 and 1.0")
 
 
 def analyze_text(text: str) -> dict:
@@ -28,70 +19,63 @@ def analyze_text(text: str) -> dict:
     Analyze text for sentiment using LLM.
     Returns a dictionary with 'sentiment' and 'confidence' keys.
     """
-    # Initialize the LLM
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        temperature=0.3,
-        api_key=os.getenv("OPENAI_API_KEY")
-    )
+    # Get Google API key
+    google_api_key = os.getenv("GOOGLE_API_KEY")
     
-    # Create output parser for structured JSON response
-    output_parser = PydanticOutputParser(pydantic_object=SentimentAnalysis)
+    if not google_api_key:
+        raise ValueError("Google API key not configured. Set GOOGLE_API_KEY in your environment.")
     
-    # Create prompt template
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are an expert at analyzing crypto-twitter slang and detecting sentiment.
-Analyze the given text and determine if it's POSITIVE or NEGATIVE sentiment.
-Pay special attention to sarcasm, irony, and crypto-twitter slang terms.
-
-{format_instructions}
-
-Return ONLY valid JSON with 'sentiment' and 'confidence' fields."""),
-        ("human", "Analyze this text: {text}")
-    ])
+    # Configure Gemini
+    genai.configure(api_key=google_api_key)
     
-    # Format the prompt with format instructions
-    formatted_prompt = prompt.partial(format_instructions=output_parser.get_format_instructions())
-    
-    # Create the chain
-    chain = formatted_prompt | llm | output_parser
-    
-    # Run the analysis
-    try:
-        result = chain.invoke({"text": text})
-        return {
-            "sentiment": result.sentiment,
-            "confidence": result.confidence
-        }
-    except Exception as e:
-        # Fallback: try to parse as JSON if Pydantic fails
-        print(f"⚠️  Error in structured parsing: {e}")
-        print("Attempting fallback JSON parsing...")
-        
-        # Fallback chain without structured output
-        fallback_prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are an expert at analyzing crypto-twitter slang and detecting sentiment.
+    # Build system prompt
+    system_prompt = """You are an expert at analyzing crypto-twitter slang and detecting sentiment.
 Analyze the given text and determine if it's POSITIVE or NEGATIVE sentiment.
 Pay special attention to sarcasm, irony, and crypto-twitter slang terms.
 
 Return ONLY valid JSON in this exact format:
-{{"sentiment": "POSITIVE" or "NEGATIVE", "confidence": 0.0-1.0}}"""),
-            ("human", "Analyze this text: {text}")
-        ])
+{"sentiment": "POSITIVE" or "NEGATIVE", "confidence": 0.0-1.0}"""
+    
+    # Build a single prompt string using system prompt + user message
+    prompt = f"{system_prompt}\n\nUSER: Analyze this text: {text}"
+    
+    # Initialize the model (can be overridden with GEMINI_MODEL env var)
+    model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    model = genai.GenerativeModel(model_name)
+    
+    # Generate content
+    try:
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.3,
+            }
+        )
         
-        fallback_chain = fallback_prompt | llm
-        response = fallback_chain.invoke({"text": text})
+        # Extract response text
+        response_text = response.text if hasattr(response, 'text') else str(response)
         
-        # Try to extract JSON from response
-        content = response.content if hasattr(response, 'content') else str(response)
         # Try to find JSON in the response
-        start_idx = content.find('{')
-        end_idx = content.rfind('}') + 1
+        start_idx = response_text.find('{')
+        end_idx = response_text.rfind('}') + 1
         if start_idx >= 0 and end_idx > start_idx:
-            json_str = content[start_idx:end_idx]
-            return json.loads(json_str)
+            json_str = response_text[start_idx:end_idx]
+            result = json.loads(json_str)
+            
+            # Validate result structure
+            if 'sentiment' not in result or 'confidence' not in result:
+                raise ValueError(f"Invalid response structure: {result}")
+            
+            return {
+                "sentiment": result['sentiment'],
+                "confidence": float(result['confidence'])
+            }
         else:
-            raise ValueError(f"Could not parse JSON from response: {content}")
+            raise ValueError(f"Could not parse JSON from response: {response_text}")
+            
+    except Exception as e:
+        print(f"⚠️  Error in Gemini API call: {e}")
+        raise ValueError(f"Failed to analyze text: {e}")
 
 
 def main():

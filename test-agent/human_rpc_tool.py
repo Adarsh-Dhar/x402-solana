@@ -241,17 +241,20 @@ def ask_human_rpc(text: str) -> dict:
                 # Parse payment details from response
                 payment_info = response.json()
                 payment_address = payment_info.get("payment_address")
-                amount_lamports = payment_info.get("amount")  # Should be in lamports
+                amount_sol = payment_info.get("amount")  # Amount in SOL
                 
-                if not payment_address or not amount_lamports:
+                if not payment_address or amount_sol is None:
                     raise ValueError(
                         f"Invalid payment response. Expected 'payment_address' and 'amount'. "
                         f"Got: {payment_info}"
                     )
                 
+                # Convert SOL to lamports (multiply by 1e9)
+                amount_lamports = int(amount_sol * 1_000_000_000)
+                
                 print(f"📋 Payment details:")
                 print(f"   Address: {payment_address}")
-                print(f"   Amount: {amount_lamports} lamports ({amount_lamports / 1e9:.9f} SOL)")
+                print(f"   Amount: {amount_sol} SOL ({amount_lamports} lamports)")
                 
                 # Send Solana payment
                 tx_signature = send_solana_payment(payment_address, amount_lamports)
@@ -259,9 +262,9 @@ def ask_human_rpc(text: str) -> dict:
                 # Wait a moment for transaction to propagate
                 time.sleep(2)
                 
-                # Retry the request with payment signature header
+                # Retry the request with payment signature header (lowercase)
                 print(f"🔄 Retrying request with payment signature...")
-                headers["X-Payment-Signature"] = tx_signature
+                headers["x-payment-signature"] = tx_signature
                 
                 retry_response = requests.post(
                     human_rpc_url,
@@ -270,7 +273,7 @@ def ask_human_rpc(text: str) -> dict:
                     timeout=30
                 )
                 
-                if retry_response.status_code == 200:
+                if retry_response.status_code in [200, 202]:
                     print("✅ Human RPC analysis complete!")
                     return retry_response.json()
                 else:
@@ -283,7 +286,7 @@ def ask_human_rpc(text: str) -> dict:
                 raise ValueError(f"Payment processing failed: {e}")
         
         # Handle other status codes
-        elif response.status_code == 200:
+        elif response.status_code in [200, 202]:
             print("✅ Human RPC analysis complete!")
             return response.json()
         else:

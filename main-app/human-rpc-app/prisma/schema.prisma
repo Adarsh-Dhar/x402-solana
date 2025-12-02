@@ -8,6 +8,8 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// Note: The `url` property is valid and required for Prisma 6.x
+// The linter may show a warning about Prisma 7 syntax, but this schema is correct for Prisma 6.19.0
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -22,4 +24,15 @@ model User {
   stakeTransactionHash String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+}
+
+model Task {
+  id                String   @id @default(cuid())
+  text              String
+  taskType          String
+  paymentSignature  String?
+  status            String   @default("pending")
+  result            Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 }
