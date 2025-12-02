@@ -1,0 +1,3 @@
+[submodule "main-app/solana-staking"]
+	path = main-app/solana-staking
+	url = https://github.com/Adarsh-Dhar/solana-staking-submodulte

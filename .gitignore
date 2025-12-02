@@ -1,0 +1,9 @@
+/main-app/human-rpc-app/node_modules
+/main-app/human-rpc-app/next.config.mjs
+/main-app/human-rpc-app/package-lock.json
+/main-app/human-rpc-app/package.json
+/main-app/human-rpc-app/README.md
+/main-app/human-rpc-app/.env
+/main-app/human-rpc-app/.env.local
+main-app/human-rpc-app/.next/dev
+main-app/human-rpc-app/public
