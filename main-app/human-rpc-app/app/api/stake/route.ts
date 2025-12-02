@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server"
-import { prisma } from "@/lib/prisma"
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js"
 
 // Ensure this route always returns JSON, not HTML error pages
@@ -13,7 +12,25 @@ const STAKE_AMOUNT_LAMPORTS = STAKE_AMOUNT_SOL * LAMPORTS_PER_SOL
 const STAKING_WALLET =
   process.env.STAKING_WALLET_ADDRESS || process.env.NEXT_PUBLIC_STAKING_WALLET || "11111111111111111111111111111111"
 
+// Lazy load prisma to catch initialization errors
+async function getPrisma() {
+  try {
+    const { prisma } = await import("@/lib/prisma")
+    if (!prisma) {
+      throw new Error("Prisma client is not initialized")
+    }
+    return prisma
+  } catch (error: any) {
+    console.error("[Stake API] Failed to import prisma:", error)
+    throw new Error(`Database connection error: ${error?.message || "Failed to initialize database client"}`)
+  }
+}
+
 export async function POST(request: Request) {
+  // Log that the route handler was called
+  console.log("[Stake API] POST handler called")
+  
+  // Wrap everything in a try-catch to ensure we always return JSON
   try {
     // Parse request body with error handling
     let body
@@ -35,6 +52,9 @@ export async function POST(request: Request) {
         { status: 400 }
       )
     }
+
+    // Get prisma client
+    const prisma = await getPrisma()
 
     let user
     try {
@@ -313,8 +333,26 @@ export async function POST(request: Request) {
     // Always return JSON, never let Next.js return HTML error pages
     return NextResponse.json(
       { error: `Internal server error: ${error?.message || "Unknown error"}` },
-      { status: 500 }
+      { 
+        status: 500,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+        },
+      }
     )
   }
+}
+
+// Export error handler to catch any module-level errors
+export async function GET() {
+  return NextResponse.json(
+    { error: "Method not allowed. Use POST." },
+    { 
+      status: 405,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+      },
+    }
+  )
 }
 
