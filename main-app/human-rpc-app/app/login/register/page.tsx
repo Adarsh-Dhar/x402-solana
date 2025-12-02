@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useWallet } from "@solana/wallet-adapter-react"
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui"
-import { Connection, PublicKey, SystemProgram, Transaction, LAMPORTS_PER_SOL } from "@solana/web3.js"
+import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js"
+import { stakeWithProgram } from "@/lib/solanaStaking"
 
 const STAKE_AMOUNT_SOL = 0.01 // 0.01 SOL stake for devnet
 const STAKE_AMOUNT_LAMPORTS = Math.round(STAKE_AMOUNT_SOL * LAMPORTS_PER_SOL)
@@ -22,7 +23,8 @@ export default function RegisterPage() {
     })
   }
   const router = useRouter()
-  const { publicKey, sendTransaction, connected } = useWallet()
+  const wallet = useWallet()
+  const { publicKey, connected } = wallet
   const [step, setStep] = useState<"form" | "stake">("form")
   const [isLoading, setIsLoading] = useState(false)
   const [isStaking, setIsStaking] = useState(false)
@@ -143,83 +145,13 @@ export default function RegisterPage() {
         return
       }
 
-      // Get the staking wallet address from environment or fall back to sending stake to the
-      // user's own wallet (so the transaction can still succeed in dev if not configured).
-      const rawStakingWalletAddress =
-        process.env.NEXT_PUBLIC_STAKING_WALLET || process.env.STAKING_WALLET_ADDRESS || publicKey.toString()
-
-      if (
-        rawStakingWalletAddress === "11111111111111111111111111111111" ||
-        rawStakingWalletAddress.trim().length === 0
-      ) {
-        throw new Error(
-          "Staking wallet address is not configured. Please set NEXT_PUBLIC_STAKING_WALLET to a valid Solana address.",
-        )
-      }
-
-      let stakingWallet: PublicKey
-      try {
-        stakingWallet = new PublicKey(rawStakingWalletAddress)
-      } catch {
-        throw new Error(
-          "Configured staking wallet address is invalid. Please check NEXT_PUBLIC_STAKING_WALLET/STAKING_WALLET_ADDRESS.",
-        )
-      }
-
-      // Create transaction
-      const transaction = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: publicKey,
-          toPubkey: stakingWallet,
-          lamports: STAKE_AMOUNT_LAMPORTS,
-        }),
-      )
-
-      // Get recent blockhash
-      const { blockhash } = await connection.getLatestBlockhash()
-      transaction.recentBlockhash = blockhash
-      transaction.feePayer = publicKey
-
-      // Send transaction with a couple of retries to work around flaky wallet/extension issues
-      console.log("[Stake] Sending transaction to staking wallet:", {
-        stakingWallet: stakingWallet.toString(),
-        fromWallet: publicKey.toString(),
-        amountLamports: STAKE_AMOUNT_LAMPORTS,
+      // Call the on-chain staking program instead of a raw SOL transfer
+      const signature = await stakeWithProgram({
+        wallet,
+        connection,
+        amount: BigInt(STAKE_AMOUNT_LAMPORTS),
       })
-
-      const sendWithRetry = async (): Promise<string> => {
-        let lastError: any = null
-
-        for (let attempt = 1; attempt <= 3; attempt++) {
-          try {
-            console.log(`[Stake] Attempt ${attempt} to send transaction`)
-            const sig = await sendTransaction(transaction, connection)
-            console.log("[Stake] Transaction submitted:", { signature: sig })
-            return sig
-          } catch (err: any) {
-            lastError = err
-            console.error(`[Stake] sendTransaction failed on attempt ${attempt}:`, err)
-
-            // For Phantom's \"disconnected port object\" bug, small delay before retry
-            if (err?.message && err.message.toString().includes("disconnected port object")) {
-              await new Promise((resolve) => setTimeout(resolve, 500))
-            }
-
-            // Don't spam retries if the user explicitly rejected in the wallet
-            if (err?.message && err.message.toString().toLowerCase().includes("user rejected")) {
-              break
-            }
-          }
-        }
-
-        throw lastError
-      }
-
-      const signature = await sendWithRetry()
-
-      // Wait for confirmation
-      await connection.confirmTransaction(signature, "confirmed")
-      console.log("[Stake] Transaction confirmed on network")
+      console.log("[Stake] Staking program transaction confirmed:", { signature })
 
       // Update user with staking info
       const stakeResponse = await fetch("/api/stake", {
