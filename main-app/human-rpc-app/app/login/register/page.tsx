@@ -97,6 +97,29 @@ export default function RegisterPage() {
     }
   }
 
+  // Helper function to safely parse JSON response
+  const parseJSONResponse = async (response: Response) => {
+    const contentType = response.headers.get("content-type")
+    
+    // Clone the response so we can read it multiple times if needed
+    const clonedResponse = response.clone()
+    const text = await clonedResponse.text()
+    
+    if (!contentType || !contentType.includes("application/json")) {
+      console.error("[Stake] Non-JSON response received. Content-Type:", contentType)
+      console.error("[Stake] Response text (first 500 chars):", text.substring(0, 500))
+      throw new Error(`Server returned non-JSON response (${contentType || "unknown"}). Please check server logs.`)
+    }
+    
+    try {
+      return JSON.parse(text)
+    } catch (parseError: any) {
+      console.error("[Stake] Failed to parse JSON:", parseError)
+      console.error("[Stake] Response text (first 500 chars):", text.substring(0, 500))
+      throw new Error(`Invalid JSON response: ${parseError.message}`)
+    }
+  }
+
   const handleStake = async () => {
     if (!connected || !publicKey) {
       setError("Please connect your Solana wallet before staking.")
@@ -165,36 +188,221 @@ export default function RegisterPage() {
       })
 
       console.log("[Stake] /api/stake response status:", stakeResponse.status)
+      console.log("[Stake] /api/stake response ok:", stakeResponse.ok)
+      console.log("[Stake] /api/stake response headers:", {
+        contentType: stakeResponse.headers.get("content-type"),
+        statusText: stakeResponse.statusText,
+      })
 
       if (!stakeResponse.ok) {
-        const data = await stakeResponse.json()
-        console.error("[Stake] /api/stake error payload:", data)
-        await rollbackRegistration()
-        setError(
-          data.error ||
-            "Stake could not be recorded. Your account was not created, please try registering again."
-        )
+        try {
+          const data = await parseJSONResponse(stakeResponse)
+          console.error("[Stake] /api/stake error payload:", data)
+          await rollbackRegistration()
+          setError(
+            data.error ||
+              "Stake could not be recorded. Your account was not created, please try registering again."
+          )
+        } catch (parseError: any) {
+          console.error("[Stake] Failed to parse error response:", parseError)
+          // Try to get the raw response for debugging
+          try {
+            const clonedResponse = stakeResponse.clone()
+            const text = await clonedResponse.text()
+            console.error("[Stake] Raw error response:", text.substring(0, 500))
+          } catch (e) {
+            // Ignore if we can't clone
+          }
+          await rollbackRegistration()
+          setError(
+            parseError.message ||
+              "Stake could not be recorded. Please check server logs and try again."
+          )
+        }
         setStep("form")
         setIsStaking(false)
         return
       }
 
-      // Auto-login after successful registration and staking
-      const loginResult = await signIn("credentials", {
-        email: formData.email,
-        password: formData.password,
-        redirect: false,
-      })
+      // Parse the response to verify the data was saved
+      let stakeData
+      try {
+        stakeData = await parseJSONResponse(stakeResponse)
+        console.log("[Stake] /api/stake response data:", stakeData)
+      } catch (parseError: any) {
+        console.error("[Stake] Failed to parse success response:", parseError)
+        console.error("[Stake] Error details:", {
+          message: parseError.message,
+          stack: parseError.stack,
+        })
+        
+        // Even if parsing fails, the staking transaction was confirmed on-chain
+        // The database update might have succeeded even if response was malformed
+        // Proceed with login attempts - the retry logic will verify the data is in the database
+        console.log("[Stake] Proceeding with login despite parse error - staking was confirmed on-chain")
+        stakeData = null
+      }
 
-      if (loginResult?.error) {
-        // Login failed after successful stake + backend stake record.
-        // In this case, keep the account and stake, but show a clear message.
-        setError("Registration and stake completed, but login failed. Please login manually.")
-        setIsStaking(false)
+      // Verify the response contains the staking data
+      if (stakeData && stakeData.user?.walletAddress && stakeData.user?.stakeAmount && stakeData.user?.stakeTransactionHash) {
+        console.log("[Stake] Staking data confirmed in API response:", {
+          walletAddress: stakeData.user.walletAddress,
+          stakeAmount: stakeData.user.stakeAmount,
+          transactionHash: stakeData.user.stakeTransactionHash,
+        })
       } else {
+        console.warn("[Stake] /api/stake response missing staking data:", stakeData)
+        // Even if response is invalid, staking was confirmed on-chain
+        // The database update might have succeeded even if response was malformed
+        // Proceed with login attempts - the retry logic will verify the data is in the database
+        console.log("[Stake] Proceeding with login despite invalid response - staking was confirmed on-chain, database update may have succeeded")
+      }
+
+      // Wait a moment for database to be fully synced across connections
+      // Give extra time for the update to be visible in subsequent queries
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+
+      // Verify staking data is visible in database before attempting login
+      let stakingVerified = false
+      let verifyAttempts = 0
+      const maxVerifyAttempts = 5
+
+      console.log("[Stake] Verifying staking data is visible in database...")
+
+      while (verifyAttempts < maxVerifyAttempts && !stakingVerified) {
+        verifyAttempts++
+        try {
+          const verifyResponse = await fetch("/api/auth/check-staking", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: formData.email,
+              password: formData.password,
+            }),
+          })
+
+          let verifyData
+          try {
+            verifyData = await parseJSONResponse(verifyResponse)
+          } catch (parseError: any) {
+            console.error("[Stake] Failed to parse verify response:", parseError)
+            if (verifyAttempts < maxVerifyAttempts) {
+              await new Promise((resolve) => setTimeout(resolve, 800))
+              continue
+            }
+            break
+          }
+
+          if (verifyResponse.ok && verifyData.hasCompletedStaking) {
+            console.log("[Stake] Staking verified in database!")
+            stakingVerified = true
+            break
+          } else {
+            console.log(`[Stake] Staking not yet visible (verify attempt ${verifyAttempts}/${maxVerifyAttempts})`)
+            if (verifyAttempts < maxVerifyAttempts) {
+              await new Promise((resolve) => setTimeout(resolve, 800))
+            }
+          }
+        } catch (verifyError: any) {
+          console.error("[Stake] Error verifying staking:", verifyError)
+          if (verifyAttempts < maxVerifyAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, 800))
+          }
+        }
+      }
+
+      if (!stakingVerified) {
+        console.warn("[Stake] Could not verify staking in database, but proceeding with login attempts")
+      } else {
+        // Small delay after verification to ensure database state is fully synced
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
+
+      // Auto-login after successful registration and staking
+      // Retry NextAuth login directly - it will check staking status internally
+      let loginSuccess = false
+      let loginAttempts = 0
+      const maxLoginAttempts = 8 // Increased attempts for better reliability
+
+      console.log("[Stake] Starting auto-login attempts after successful staking")
+
+      while (loginAttempts < maxLoginAttempts && !loginSuccess) {
+        loginAttempts++
+
+        try {
+          console.log(`[Stake] Login attempt ${loginAttempts}/${maxLoginAttempts}`)
+
+          // Directly attempt NextAuth login
+          // The authorize function will check staking status
+          const loginResult = await signIn("credentials", {
+            email: formData.email,
+            password: formData.password,
+            redirect: false,
+          })
+
+          console.log("[Stake] Login result:", loginResult)
+
+          // Check for success - NextAuth returns { error: null } or { error: undefined } on success
+          // CredentialsSignin means login failed - it's NOT success
+          const isSuccess = 
+            !loginResult?.error || 
+            loginResult?.error === null ||
+            loginResult?.error === undefined
+
+          if (isSuccess) {
+            // Login successful!
+            console.log("[Stake] Login successful! Result:", loginResult)
+            loginSuccess = true
+            break
+          } else {
+            // Login failed - could be staking not visible yet or other issue
+            console.log(`[Stake] Login failed (attempt ${loginAttempts}):`, loginResult.error)
+            
+            // Check if it's a staking-related error
+            const isStakingError = 
+              loginResult.error.includes("staking") || 
+              loginResult.error.includes("activate") ||
+              loginResult.error === "CredentialsSignin" // Generic error might mean staking check failed
+
+            if (isStakingError && loginAttempts < maxLoginAttempts) {
+              // Wait longer between attempts for database to sync
+              const waitTime = loginAttempts * 500 // Progressive backoff: 500ms, 1000ms, 1500ms...
+              console.log(`[Stake] Waiting ${waitTime}ms before retry...`)
+              await new Promise((resolve) => setTimeout(resolve, waitTime))
+              continue
+            } else if (!isStakingError) {
+              // Non-staking error, don't retry
+              console.error("[Stake] Non-staking login error, stopping retries")
+              break
+            }
+          }
+        } catch (loginError: any) {
+          console.error(`[Stake] Error during login attempt ${loginAttempts}:`, loginError)
+          if (loginAttempts < maxLoginAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, 1000))
+            continue
+          }
+        }
+      }
+
+      if (loginSuccess) {
+        console.log("[Stake] Auto-login successful, redirecting to app")
         setRegisteredUserId(null)
+        setIsStaking(false)
         router.push("/")
         router.refresh()
+      } else {
+        // Login failed after all retries
+        // The account and stake are saved, so user can login manually
+        console.warn("[Stake] Auto-login failed after all retries, redirecting to login page")
+        setError(
+          "Registration and stake completed successfully! Redirecting to login..."
+        )
+        setIsStaking(false)
+        // Redirect to login page after a short delay
+        setTimeout(() => {
+          router.push("/login")
+        }, 2000)
       }
     } catch (err: any) {
       console.error("[Stake] Error during stake flow:", err)

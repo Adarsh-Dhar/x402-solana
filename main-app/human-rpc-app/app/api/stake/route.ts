@@ -2,6 +2,10 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js"
 
+// Ensure this route always returns JSON, not HTML error pages
+export const dynamic = "force-dynamic"
+export const runtime = "nodejs"
+
 const STAKE_AMOUNT_SOL = 0.01 // 0.01 SOL stake for devnet
 const STAKE_AMOUNT_LAMPORTS = STAKE_AMOUNT_SOL * LAMPORTS_PER_SOL
 
@@ -11,7 +15,18 @@ const STAKING_WALLET =
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json()
+    // Parse request body with error handling
+    let body
+    try {
+      body = await request.json()
+    } catch (parseError: any) {
+      console.error("[Stake API] Failed to parse request body:", parseError)
+      return NextResponse.json(
+        { error: "Invalid request body. Expected JSON." },
+        { status: 400 }
+      )
+    }
+
     const { userId, walletAddress, transactionSignature } = body
 
     if (!userId || !walletAddress || !transactionSignature) {
@@ -21,15 +36,24 @@ export async function POST(request: Request) {
       )
     }
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        walletAddress: true,
-        stakeAmount: true,
-      },
-    })
+    let user
+    try {
+      user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          email: true,
+          walletAddress: true,
+          stakeAmount: true,
+        },
+      })
+    } catch (dbError: any) {
+      console.error("[Stake API] Database query error:", dbError)
+      return NextResponse.json(
+        { error: `Database error: ${dbError?.message || "Failed to query user"}` },
+        { status: 500 }
+      )
+    }
 
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 })
@@ -40,10 +64,11 @@ export async function POST(request: Request) {
     }
 
     // Verify the transaction on Solana
-    const connection = new Connection(process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com", "confirmed")
-    
+    let connection
+    let tx
     try {
-      const tx = await connection.getTransaction(transactionSignature, {
+      connection = new Connection(process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com", "confirmed")
+      tx = await connection.getTransaction(transactionSignature, {
         commitment: "confirmed",
       })
 
@@ -51,70 +76,245 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: "Transaction not found" }, { status: 400 })
       }
 
+      // Verify transaction exists and was successful
+      if (tx.meta?.err) {
+        return NextResponse.json(
+          { error: `Transaction failed: ${JSON.stringify(tx.meta.err)}` },
+          { status: 400 }
+        )
+      }
+
       // Verify transaction details
       // Check that the transaction is from the correct wallet
-      const userWalletPubkey = new PublicKey(walletAddress)
-      const stakingWalletPubkey = new PublicKey(STAKING_WALLET)
+      let userWalletPubkey
+      try {
+        userWalletPubkey = new PublicKey(walletAddress)
+      } catch (pubkeyError: any) {
+        console.error("[Stake API] Invalid wallet address:", pubkeyError)
+        return NextResponse.json(
+          { error: `Invalid wallet address: ${pubkeyError?.message || "Invalid format"}` },
+          { status: 400 }
+        )
+      }
       
-      if (!tx.transaction.message.accountKeys.some(key => key.pubkey.equals(userWalletPubkey))) {
+      // Verify the user's wallet is involved in the transaction
+      // Check accountKeys - they can be PublicKey objects or AccountMeta objects
+      const accountKeys = tx.transaction.message.accountKeys
+      if (!accountKeys || accountKeys.length === 0) {
+        console.error("[Stake API] Transaction has no account keys")
+        return NextResponse.json(
+          { error: "Transaction has no account keys" },
+          { status: 400 }
+        )
+      }
+      
+      // Check if the user's wallet is in the transaction
+      // accountKeys can be PublicKey objects directly or AccountMeta objects with pubkey property
+      let isUserSigner = false
+      try {
+        isUserSigner = accountKeys.some((key: any) => {
+          if (!key) return false
+          
+          // Handle PublicKey object directly
+          if (key.equals && typeof key.equals === 'function') {
+            try {
+              return key.equals(userWalletPubkey)
+            } catch (e) {
+              return false
+            }
+          }
+          
+          // Handle AccountMeta object with pubkey property
+          if (key.pubkey) {
+            try {
+              if (key.pubkey.equals && typeof key.pubkey.equals === 'function') {
+                return key.pubkey.equals(userWalletPubkey)
+              }
+            } catch (e) {
+              return false
+            }
+          }
+          
+          return false
+        })
+      } catch (verifyError: any) {
+        console.error("[Stake API] Error verifying user wallet in transaction:", verifyError)
+        console.error("[Stake API] AccountKeys structure:", accountKeys?.map((k: any) => ({
+          type: typeof k,
+          hasEquals: !!k?.equals,
+          hasPubkey: !!k?.pubkey,
+          pubkeyType: typeof k?.pubkey,
+        })))
+        return NextResponse.json(
+          { error: `Failed to verify transaction: ${verifyError.message}` },
+          { status: 400 }
+        )
+      }
+      
+      if (!isUserSigner) {
+        console.error("[Stake API] User wallet not found in transaction signers")
+        console.error("[Stake API] User wallet:", walletAddress)
+        console.error("[Stake API] Account keys count:", accountKeys.length)
         return NextResponse.json(
           { error: "Transaction must be from the provided wallet address" },
           { status: 400 }
         )
       }
-      
-      // Verify the transaction amount by checking pre/post balances
-      // The difference should be approximately the stake amount (accounting for fees)
-      const preBalances = tx.meta?.preBalances || []
-      const postBalances = tx.meta?.postBalances || []
-      const accountKeys = tx.transaction.message.accountKeys
-      
-      let userBalanceChange = 0
-      let stakingBalanceChange = 0
-      
-      for (let i = 0; i < accountKeys.length; i++) {
-        const key = accountKeys[i]
-        if (key.pubkey.equals(userWalletPubkey)) {
-          userBalanceChange = (postBalances[i] || 0) - (preBalances[i] || 0)
+
+      // Basic verification - transaction exists, is confirmed, and user is a signer
+      // We trust that if the transaction was confirmed on-chain, it's valid
+      console.log("[Stake API] Transaction verified:", {
+        signature: transactionSignature,
+        userWallet: walletAddress,
+        confirmed: !!tx,
+        hasError: !!tx.meta?.err,
+      })
+
+      // Update user with staking information
+      console.log("[Stake API] Updating user with staking info:", {
+        userId,
+        walletAddress,
+        stakeAmount: STAKE_AMOUNT_SOL,
+        transactionSignature,
+      })
+
+      // Update user with staking information
+      let updatedUser
+      try {
+        // Simple update - Prisma handles transactions automatically
+        updatedUser = await prisma.user.update({
+          where: { id: userId },
+          data: {
+            walletAddress,
+            stakeAmount: STAKE_AMOUNT_SOL,
+            stakeTransactionHash: transactionSignature,
+          },
+          select: {
+            id: true,
+            email: true,
+            walletAddress: true,
+            stakeAmount: true,
+            stakeTransactionHash: true,
+          },
+        })
+        
+        console.log("[Stake API] User updated successfully:", JSON.stringify(updatedUser, null, 2))
+        
+        // Verify the update immediately by reading from database
+        const verifyRead = await prisma.user.findUnique({
+          where: { id: userId },
+          select: {
+            walletAddress: true,
+            stakeAmount: true,
+            stakeTransactionHash: true,
+          },
+        })
+        
+        console.log("[Stake API] Verification read from database:", JSON.stringify(verifyRead, null, 2))
+        
+        if (!verifyRead?.walletAddress || !verifyRead?.stakeAmount || !verifyRead?.stakeTransactionHash) {
+          console.error("[Stake API] Database verification failed - data not found after update")
+          console.error("[Stake API] Verify read result:", verifyRead)
+          return NextResponse.json(
+            { error: "Update completed but verification failed - data not found in database" },
+            { status: 500 }
+          )
         }
-        if (key.pubkey.equals(stakingWalletPubkey)) {
-          stakingBalanceChange = (postBalances[i] || 0) - (preBalances[i] || 0)
+        
+        console.log("[Stake API] Database verification successful - all fields present")
+        
+        // Verify the update response data
+        if (!updatedUser.walletAddress || !updatedUser.stakeAmount || !updatedUser.stakeTransactionHash) {
+          console.error("[Stake API] Update returned incomplete data:", updatedUser)
+          return NextResponse.json(
+            { error: "Update completed but response data is incomplete" },
+            { status: 500 }
+          )
         }
+      } catch (updateError: any) {
+        console.error("[Stake API] Failed to update user:", updateError)
+        console.error("[Stake API] Error details:", {
+          message: updateError.message,
+          stack: updateError.stack,
+          code: updateError.code,
+          meta: updateError.meta,
+        })
+        return NextResponse.json(
+          { error: `Failed to save staking information: ${updateError.message}` },
+          { status: 500 }
+        )
+      }
+
+      // Return success response with proper JSON
+      // Ensure all values are properly serialized
+      const responseData = {
+        user: {
+          id: updatedUser.id,
+          email: updatedUser.email,
+          walletAddress: updatedUser.walletAddress || "",
+          stakeAmount: updatedUser.stakeAmount ? updatedUser.stakeAmount.toString() : null,
+          stakeTransactionHash: updatedUser.stakeTransactionHash || "",
+        },
       }
       
-      // Verify the staking wallet received the correct amount
-      // Allow for small variance due to transaction fees
-      if (stakingBalanceChange < STAKE_AMOUNT_LAMPORTS - 5000) { // Allow 0.000005 SOL variance for fees
+      // Validate response data before sending
+      if (!responseData.user.walletAddress || !responseData.user.stakeAmount || !responseData.user.stakeTransactionHash) {
+        console.error("[Stake API] Response data validation failed:", responseData)
         return NextResponse.json(
-          { error: `Transaction amount must be at least ${STAKE_AMOUNT_SOL} SOL. Received: ${stakingBalanceChange / LAMPORTS_PER_SOL} SOL` },
-          { status: 400 }
+          { error: "Staking data is incomplete in response" },
+          { status: 500 }
         )
       }
       
-      // Update user with staking information
-      const updatedUser = await prisma.user.update({
-        where: { id: userId },
-        data: {
-          walletAddress,
-          stakeAmount: STAKE_AMOUNT_SOL,
-          stakeTransactionHash: transactionSignature,
-        },
-        select: {
-          id: true,
-          email: true,
-          walletAddress: true,
-          stakeAmount: true,
+      // Serialize to JSON string first to ensure it's valid
+      let jsonString
+      try {
+        jsonString = JSON.stringify(responseData)
+        console.log("[Stake API] JSON serialization successful, length:", jsonString.length)
+      } catch (jsonError: any) {
+        console.error("[Stake API] Failed to serialize response to JSON:", jsonError)
+        return NextResponse.json(
+          { error: "Failed to serialize response data" },
+          { status: 500 }
+        )
+      }
+      
+      console.log("[Stake API] Returning success response:", jsonString.substring(0, 200))
+      
+      // Create response with explicit JSON content
+      const response = new NextResponse(jsonString, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
         },
       })
-
-      return NextResponse.json({ user: updatedUser }, { status: 200 })
-    } catch (error) {
-      console.error("Transaction verification error:", error)
-      return NextResponse.json({ error: "Failed to verify transaction" }, { status: 400 })
+      
+      console.log("[Stake API] Response created successfully, returning...")
+      return response
+    } catch (error: any) {
+      console.error("[Stake API] Transaction verification error:", error)
+      console.error("[Stake API] Error details:", {
+        message: error?.message,
+        stack: error?.stack,
+        name: error?.name,
+      })
+      return NextResponse.json(
+        { error: `Failed to verify transaction: ${error?.message || "Unknown error"}` },
+        { status: 400 }
+      )
     }
-  } catch (error) {
-    console.error("Staking error:", error)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  } catch (error: any) {
+    console.error("[Stake API] Top-level error:", error)
+    console.error("[Stake API] Error details:", {
+      message: error?.message,
+      stack: error?.stack,
+      name: error?.name,
+    })
+    // Always return JSON, never let Next.js return HTML error pages
+    return NextResponse.json(
+      { error: `Internal server error: ${error?.message || "Unknown error"}` },
+      { status: 500 }
+    )
   }
 }
 

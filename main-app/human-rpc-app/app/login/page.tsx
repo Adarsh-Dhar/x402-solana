@@ -22,6 +22,49 @@ export default function LoginPage() {
     setIsLoading(true)
 
     try {
+      // First check staking status to provide better error messages
+      const checkResponse = await fetch("/api/auth/check-staking", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      })
+
+      // Helper function to safely parse JSON response
+      const parseJSONResponse = async (response: Response) => {
+        const contentType = response.headers.get("content-type")
+        if (!contentType || !contentType.includes("application/json")) {
+          const text = await response.text()
+          console.error("[Login] Non-JSON response received:", text.substring(0, 200))
+          throw new Error("Server returned non-JSON response. Please try again.")
+        }
+        return response.json()
+      }
+
+      let checkData
+      try {
+        checkData = await parseJSONResponse(checkResponse)
+      } catch (parseError: any) {
+        console.error("[Login] Failed to parse response:", parseError)
+        setError("An error occurred while checking your account. Please try again.")
+        setIsLoading(false)
+        return
+      }
+
+      if (!checkResponse.ok) {
+        // Invalid credentials
+        setError(checkData.error || "Invalid email or password")
+        setIsLoading(false)
+        return
+      }
+
+      if (!checkData.hasCompletedStaking) {
+        // Staking not complete
+        setError(checkData.message || "Please complete staking to activate your account")
+        setIsLoading(false)
+        return
+      }
+
+      // Staking is complete, proceed with login
       const result = await signIn("credentials", {
         email,
         password,
@@ -29,14 +72,27 @@ export default function LoginPage() {
       })
 
       if (result?.error) {
-        setError("Invalid email or password")
+        // This should rarely happen if staking check passed, but handle it anyway
+        let errorMessage = "Invalid email or password"
+        
+        if (result.error && typeof result.error === "string") {
+          if (result.error.includes("staking") || result.error.includes("activate")) {
+            errorMessage = result.error
+          } else if (result.error !== "CredentialsSignin") {
+            errorMessage = result.error
+          }
+        }
+        
+        setError(errorMessage)
         setIsLoading(false)
       } else {
         router.push("/")
         router.refresh()
       }
-    } catch (err) {
-      setError("An error occurred. Please try again.")
+    } catch (err: any) {
+      // Handle network errors or other exceptions
+      const errorMessage = err?.message || "An error occurred. Please try again."
+      setError(errorMessage)
       setIsLoading(false)
     }
   }
