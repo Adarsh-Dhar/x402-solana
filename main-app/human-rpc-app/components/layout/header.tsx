@@ -1,9 +1,10 @@
 "use client"
 
 import { motion } from "framer-motion"
-import { Bell, Cpu } from "lucide-react"
+import { Bell, Cpu, LogOut } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
+import { useSession, signOut } from "next-auth/react"
 
 interface HeaderProps {
   onProfileClick: () => void
@@ -18,6 +19,8 @@ export default function Header({
   hasUrgentNotification,
   onNotificationClick,
 }: HeaderProps) {
+  const { data: session, status } = useSession()
+
   return (
     <motion.header
       initial={{ opacity: 0, y: -20 }}
@@ -47,6 +50,29 @@ export default function Header({
               </motion.span>
             )}
           </Button>
+
+          {status === "authenticated" && (
+            <>
+              {session?.user?.email && (
+                <span className="hidden text-xs font-mono text-muted-foreground sm:inline">
+                  {session.user.email}
+                </span>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="hidden items-center gap-1 rounded-full border-border/60 bg-background/60 px-3 text-xs font-mono text-muted-foreground hover:border-[var(--alert-red)]/50 hover:bg-[var(--alert-red)]/10 hover:text-[var(--alert-red)] sm:inline-flex"
+                onClick={() =>
+                  signOut({
+                    callbackUrl: "/login",
+                  })
+                }
+              >
+                <LogOut className="h-3 w-3" />
+                Logout
+              </Button>
+            </>
+          )}
 
           <button
             onClick={onProfileClick}

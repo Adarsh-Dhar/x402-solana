@@ -30,6 +30,12 @@ function getModels(prisma: PrismaClient) {
   }
 }
 
+// Helper to safely access task model (for backwards-compatible code paths)
+function getTaskModel(prisma: PrismaClient) {
+  const prismaAny = prisma as any
+  return prismaAny.task
+}
+
 /**
  * GET handler - Retrieve task by ID for polling
  */
@@ -154,7 +160,7 @@ export async function PATCH(
       )
     }
 
-    const { decision, userId } = body
+    const { decision, userId: rawUserId, userEmail } = body
 
     if (!decision || (decision !== "yes" && decision !== "no")) {
       return NextResponse.json(
@@ -173,6 +179,8 @@ export async function PATCH(
     
     const prisma = await getPrisma()
     const { task: taskModel, vote: voteModel } = getModels(prisma)
+    const prismaAny = prisma as any
+    const userModel = prismaAny.user
 
     // Check if task exists
     const existingTask = await taskModel.findUnique({
@@ -202,12 +210,40 @@ export async function PATCH(
       )
     }
 
-    // Check if user already voted (if userId provided)
-    if (userId) {
+    // Resolve userId from userEmail (or raw userId if passed explicitly)
+    let resolvedUserId: string | null = null
+
+    if (rawUserId) {
+      resolvedUserId = rawUserId
+    } else if (userEmail) {
+      try {
+        let user = await userModel.findUnique({
+          where: { email: userEmail },
+        })
+
+        if (!user) {
+          // Auto-create a minimal user record for this email so points can be tracked
+          user = await userModel.create({
+            data: {
+              email: userEmail,
+              password: "placeholder", // NOTE: replace with real password handling when wiring auth
+            },
+          })
+        }
+
+        resolvedUserId = user.id
+      } catch (e) {
+        console.error("[Task API] Failed to resolve user by email:", e)
+        resolvedUserId = null
+      }
+    }
+
+    // Check if user already voted (if user identified)
+    if (resolvedUserId) {
       const existingVote = await voteModel.findFirst({
         where: {
           taskId: taskId,
-          userId: userId,
+          userId: resolvedUserId,
         },
       })
 
@@ -234,7 +270,7 @@ export async function PATCH(
     const vote = await voteModel.create({
       data: {
         taskId: taskId,
-        userId: userId || null,
+        userId: resolvedUserId,   // link vote to user so points can be awarded
         decision: decision,
       },
     })

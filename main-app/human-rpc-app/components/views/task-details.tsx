@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useSession, signOut } from "next-auth/react"
 import { motion } from "framer-motion"
 import { ArrowLeft, Shield, Clock, DollarSign, Check, X, AlertTriangle, Users, Target } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -23,10 +24,12 @@ interface ConsensusInfo {
 }
 
 export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
+  const { data: session, status } = useSession()
   const [decision, setDecision] = useState<"yes" | "no" | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [consensusInfo, setConsensusInfo] = useState<ConsensusInfo | null>(null)
+  const [userEmail, setUserEmail] = useState<string | null>(null)
 
   // Fetch consensus information
   const fetchConsensusInfo = async () => {
@@ -44,6 +47,15 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
     }
   }
 
+  // Sync user email from authenticated session
+  useEffect(() => {
+    if (status === "authenticated" && session?.user?.email) {
+      setUserEmail(session.user.email)
+    } else if (status === "unauthenticated") {
+      setUserEmail(null)
+    }
+  }, [status, session?.user?.email])
+
   // Poll for consensus updates
   useEffect(() => {
     if (task.status !== "completed") {
@@ -54,6 +66,10 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
   }, [task.status, task.taskId, task.id])
 
   const handleDecision = async (choice: "yes" | "no") => {
+    if (!userEmail) {
+      setError("You must be logged in to submit a decision.")
+      return
+    }
     setDecision(choice)
     setIsSubmitting(true)
     setError(null)
@@ -61,13 +77,13 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
     try {
       // Extract full task ID (use taskId if available, otherwise try to extract from id)
       const taskId = task.taskId || task.id.replace(/^#/, "")
-      
+
       const response = await fetch(`/api/v1/tasks/${taskId}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ decision: choice }),
+        body: JSON.stringify({ decision: choice, userEmail }),
       })
 
       if (!response.ok) {
@@ -288,11 +304,44 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
             )}
 
             <div className="mb-6 rounded-lg border border-[var(--solana-purple)]/30 bg-[var(--solana-purple)]/5 p-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Agent Escrow</span>
-                <span className="font-mono text-lg font-bold text-[var(--solana-purple)]">{task.escrowAmount}</span>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <span className="text-sm text-muted-foreground">Agent Escrow</span>
+                  <div className="mt-1 font-mono text-lg font-bold text-[var(--solana-purple)]">
+                    {task.escrowAmount}
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Secured via x402 protocol on Solana
+                  </p>
+                </div>
+
+                <div className="flex flex-col items-end gap-2">
+                  {status === "authenticated" && userEmail && (
+                    <>
+                      <span className="font-mono text-xs text-[var(--neon-green)]">
+                        Voting as {userEmail}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-border/60 bg-background/40 text-xs font-mono text-muted-foreground hover:bg-[var(--alert-red)]/10 hover:text-[var(--alert-red)] hover:border-[var(--alert-red)]/40"
+                        onClick={() =>
+                          signOut({
+                            callbackUrl: "/login",
+                          })
+                        }
+                      >
+                        Logout
+                      </Button>
+                    </>
+                  )}
+                  {status === "unauthenticated" && (
+                    <span className="text-xs text-muted-foreground">
+                      Not logged in
+                    </span>
+                  )}
+                </div>
               </div>
-              <p className="mt-2 text-xs text-muted-foreground">Secured via x402 protocol on Solana</p>
             </div>
 
             {error && (

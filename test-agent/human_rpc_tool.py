@@ -369,20 +369,20 @@ def send_solana_payment(payment_address: str, amount_lamports: int) -> Transacti
     return transaction
 
 
-def poll_task_status(task_id: str, max_wait_seconds: int = 300, poll_interval: int = 3) -> dict:
+def poll_task_status(task_id: str, max_wait_seconds: Optional[int] = None, poll_interval: int = 3) -> dict:
     """
-    Poll task status until completion or timeout.
+    Poll task status until completion or optional timeout.
     
     Args:
         task_id: The task ID to poll
-        max_wait_seconds: Maximum time to wait in seconds (default: 5 minutes)
+        max_wait_seconds: Maximum time to wait in seconds. If None, wait indefinitely.
         poll_interval: Time between polls in seconds (default: 3 seconds)
         
     Returns:
         Dictionary with task result containing sentiment and confidence
         
     Raises:
-        ValueError: If polling times out or fails
+        ValueError: If polling times out (when max_wait_seconds is set) or fails
     """
     human_rpc_url = os.getenv("HUMAN_RPC_URL", "http://localhost:3000/api/v1/tasks")
     task_url = f"{human_rpc_url}/{task_id}"
@@ -395,7 +395,8 @@ def poll_task_status(task_id: str, max_wait_seconds: int = 300, poll_interval: i
     while True:
         elapsed = time.time() - start_time
         
-        if elapsed >= max_wait_seconds:
+        # Only enforce timeout if max_wait_seconds is explicitly set
+        if max_wait_seconds is not None and elapsed >= max_wait_seconds:
             raise ValueError(
                 f"Polling timeout after {max_wait_seconds}s. Task {task_id} did not complete."
             )
