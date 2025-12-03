@@ -48,7 +48,6 @@ model Task {
   currentVoteCount  Int      @default(0)
   yesVotes          Int      @default(0)
   noVotes           Int      @default(0)
-  consensusStage    Int      @default(1)
   currentPhase      Int      @default(1)
   phaseMeta         Json?
   votes             Vote[]
