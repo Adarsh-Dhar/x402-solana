@@ -8,6 +8,7 @@ import os
 import json
 import time
 import requests
+import base64
 from typing import Optional
 from dotenv import load_dotenv
 from langchain.tools import tool
@@ -17,6 +18,7 @@ from solders.transaction import Transaction
 from solders.message import Message
 from solders.pubkey import Pubkey
 from solders.hash import Hash
+from solders.instruction import Instruction, AccountMeta
 import base58
 
 # Load environment variables
@@ -52,16 +54,119 @@ def load_agent_wallet() -> Keypair:
             raise ValueError(f"Could not parse AGENT_PRIVATE_KEY: {e}")
 
 
-def send_solana_payment(payment_address: str, amount_lamports: int) -> str:
+def derive_associated_token_address(wallet: Pubkey, mint: Pubkey) -> Pubkey:
     """
-    Send a SOL payment transaction on Solana.
+    Derive the associated token account address for a wallet and mint.
+    Uses the standard SPL Token associated token account derivation.
+    """
+    # Associated token account derivation:
+    # PDA with seeds: [wallet, TOKEN_PROGRAM_ID, mint]
+    # Using the standard derivation method
+    TOKEN_PROGRAM_ID = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+    ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+    
+    # The seeds for ATA derivation are: [wallet, TOKEN_PROGRAM_ID, mint]
+    seeds = [
+        bytes(wallet),
+        bytes(TOKEN_PROGRAM_ID),
+        bytes(mint),
+    ]
+    
+    # Find the program address using Pubkey.find_program_address
+    address, _ = Pubkey.find_program_address(seeds, ASSOCIATED_TOKEN_PROGRAM_ID)
+    return address
+
+
+def send_usdc_payment(token_account: str, amount: int, mint_address: str = None) -> Transaction:
+    """
+    Build a USDC (SPL Token) payment transaction.
+    
+    Args:
+        token_account: The recipient's associated token account address
+        amount: Amount to send in token base units (e.g., 100 = 0.0001 USDC for 6 decimals)
+        mint_address: USDC mint address (defaults to devnet USDC)
+        
+    Returns:
+        Signed transaction ready to serialize
+    """
+    if mint_address is None:
+        mint_address = os.getenv("USDC_MINT_ADDRESS", "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU")
+    
+    print(f"💸 Preparing USDC payment: {amount} base units to {token_account}")
+    
+    # Load wallet
+    wallet = load_agent_wallet()
+    rpc_url = get_solana_connection()
+    
+    # Convert addresses to Pubkeys
+    to_token_account = Pubkey.from_string(token_account)
+    mint_pubkey = Pubkey.from_string(mint_address)
+    from_pubkey = wallet.pubkey()
+    
+    # Derive the sender's associated token account
+    from_token_account = derive_associated_token_address(from_pubkey, mint_pubkey)
+    
+    # Get recent blockhash
+    try:
+        blockhash_payload = {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "getLatestBlockhash",
+            "params": [{"commitment": "confirmed"}]
+        }
+        blockhash_response = requests.post(rpc_url, json=blockhash_payload, timeout=10)
+        blockhash_data = blockhash_response.json()
+        recent_blockhash_str = blockhash_data.get("result", {}).get("value", {}).get("blockhash")
+        
+        if not recent_blockhash_str:
+            raise ValueError("Could not get recent blockhash from RPC")
+        
+        recent_blockhash = Hash.from_string(recent_blockhash_str)
+    except Exception as e:
+        raise ValueError(f"Could not get recent blockhash: {e}")
+    
+    # Build SPL Token Transfer instruction
+    # Instruction format: [instruction_type (1 byte), amount (8 bytes, u64 little-endian)]
+    TOKEN_PROGRAM_ID = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+    
+    # Transfer instruction type is 3
+    instruction_data = bytearray([3])  # Transfer instruction
+    # Add amount as u64 little-endian
+    instruction_data.extend(amount.to_bytes(8, 'little'))
+    
+    # Create instruction
+    # Accounts: [source, destination, owner]
+    transfer_ix = Instruction(
+        program_id=TOKEN_PROGRAM_ID,
+        data=bytes(instruction_data),
+        accounts=[
+            AccountMeta(pubkey=from_token_account, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=to_token_account, is_signer=False, is_writable=True),
+            AccountMeta(pubkey=from_pubkey, is_signer=True, is_writable=False),
+        ]
+    )
+    
+    # Create message with blockhash
+    message = Message.new_with_blockhash([transfer_ix], from_pubkey, recent_blockhash)
+    
+    # Create unsigned transaction and sign it
+    transaction = Transaction.new_unsigned(message)
+    transaction.sign([wallet], recent_blockhash)
+    
+    print(f"✅ USDC transaction built and signed")
+    return transaction
+
+
+def send_solana_payment(payment_address: str, amount_lamports: int) -> Transaction:
+    """
+    Build a SOL payment transaction on Solana.
     
     Args:
         payment_address: The recipient's Solana address
         amount_lamports: Amount to send in lamports
         
     Returns:
-        Transaction signature string
+        Signed transaction ready to serialize
     """
     print(f"💸 Preparing Solana payment: {amount_lamports} lamports to {payment_address}")
     
@@ -71,7 +176,31 @@ def send_solana_payment(payment_address: str, amount_lamports: int) -> str:
     
     # Convert string address to Pubkey
     to_pubkey = Pubkey.from_string(payment_address)
-    from_pubkey = wallet.pubkey()
+    
+    # Use the agent's wallet address (hardcoded or from env var)
+    # Default to the provided agent wallet address
+    AGENT_WALLET_ADDRESS = os.getenv("AGENT_WALLET_ADDRESS", "6B2jLPadbxtn3mtMVfAxs8w2CtLrQiE1ZK2au4Zq9fpD")
+    from_pubkey = Pubkey.from_string(AGENT_WALLET_ADDRESS)
+    
+    # Verify the wallet we're using can sign (it should match the loaded wallet)
+    wallet_pubkey = wallet.pubkey()
+    
+    # Debug: Verify addresses
+    print(f"🔍 Address verification:")
+    print(f"   From (sender/agent): {from_pubkey}")
+    print(f"   To (recipient/treasury): {to_pubkey}")
+    print(f"   Loaded wallet address: {wallet_pubkey}")
+    print(f"   Are from and to the same? {from_pubkey == to_pubkey}")
+    
+    if from_pubkey == to_pubkey:
+        raise ValueError(f"ERROR: from_pubkey and to_pubkey are the same! Both are: {from_pubkey}")
+    
+    # Verify wallet can sign for from_pubkey
+    if wallet_pubkey != from_pubkey:
+        raise ValueError(
+            f"ERROR: Loaded wallet address ({wallet_pubkey}) doesn't match agent address ({from_pubkey}). "
+            f"Please ensure AGENT_PRIVATE_KEY corresponds to the agent wallet address."
+        )
     
     # Check balance before sending using RPC
     try:
@@ -95,26 +224,37 @@ def send_solana_payment(payment_address: str, amount_lamports: int) -> str:
         print(f"⚠️  Could not check balance: {e}")
         print("   Proceeding anyway...")
     
-    # Get recent blockhash
+    # Get recent blockhash (refresh right before building transaction to avoid staleness)
     try:
         blockhash_payload = {
             "jsonrpc": "2.0",
             "id": 2,
             "method": "getLatestBlockhash",
-            "params": [{"commitment": "confirmed"}]
+            "params": [{"commitment": "finalized"}]  # Use finalized for more reliable blockhash
         }
         blockhash_response = requests.post(rpc_url, json=blockhash_payload, timeout=10)
         blockhash_data = blockhash_response.json()
+        
+        if "error" in blockhash_data:
+            raise ValueError(f"RPC error getting blockhash: {blockhash_data['error']}")
+        
         recent_blockhash_str = blockhash_data.get("result", {}).get("value", {}).get("blockhash")
         
         if not recent_blockhash_str:
             raise ValueError("Could not get recent blockhash from RPC")
         
         recent_blockhash = Hash.from_string(recent_blockhash_str)
+        print(f"🔗 Using blockhash: {recent_blockhash_str[:16]}...")
     except Exception as e:
         raise ValueError(f"Could not get recent blockhash: {e}")
     
-    # Create transfer instruction
+    # Use solders' built-in transfer function to create the instruction correctly
+    # This ensures the instruction data format is correct
+    if from_pubkey == to_pubkey:
+        raise ValueError(f"ERROR: from_pubkey and to_pubkey are the same! Both are: {from_pubkey}")
+    
+    # Create transfer instruction using solders' transfer function
+    # This will create the instruction with the correct data format
     transfer_ix = transfer(
         TransferParams(
             from_pubkey=from_pubkey,
@@ -123,86 +263,152 @@ def send_solana_payment(payment_address: str, amount_lamports: int) -> str:
         )
     )
     
+    # Debug: Verify the instruction accounts
+    print(f"🔍 Transfer instruction verification:")
+    print(f"   Program ID: {transfer_ix.program_id}")
+    print(f"   Data length: {len(transfer_ix.data)} bytes")
+    if len(transfer_ix.data) > 0:
+        print(f"   Data first byte: {transfer_ix.data[0]}")
+    print(f"   Accounts count: {len(transfer_ix.accounts)}")
+    
+    # Check and fix account ordering if needed
+    accounts_need_fix = False
+    for i, acc in enumerate(transfer_ix.accounts):
+        print(f"     Account {i}: {str(acc.pubkey)}, signer={acc.is_signer}, writable={acc.is_writable}")
+        # Verify account matches expected
+        if i == 0:
+            if str(acc.pubkey) != str(from_pubkey):
+                print(f"     ⚠️  WARNING: Account 0 should be from_pubkey ({from_pubkey}) but got {acc.pubkey}")
+                accounts_need_fix = True
+        elif i == 1:
+            if str(acc.pubkey) != str(to_pubkey):
+                print(f"     ⚠️  WARNING: Account 1 should be to_pubkey ({to_pubkey}) but got {acc.pubkey}")
+                accounts_need_fix = True
+    
+    # If accounts are wrong, manually fix them while keeping the correct instruction data
+    if accounts_need_fix:
+        print(f"🔧 Fixing account order in instruction...")
+        # Keep the instruction data (which is correct), but fix the accounts
+        transfer_ix = Instruction(
+            program_id=transfer_ix.program_id,
+            data=transfer_ix.data,  # Keep the correct data from transfer()
+            accounts=[
+                AccountMeta(pubkey=from_pubkey, is_signer=True, is_writable=True),
+                AccountMeta(pubkey=to_pubkey, is_signer=False, is_writable=True),
+            ]
+        )
+        print(f"✅ Instruction accounts fixed")
+        print(f"   Account 0: {str(transfer_ix.accounts[0].pubkey)} (should be {from_pubkey})")
+        print(f"   Account 1: {str(transfer_ix.accounts[1].pubkey)} (should be {to_pubkey})")
+    
+    # Debug: Print instruction details
+    print(f"🔍 Transfer instruction details:")
+    print(f"   Program ID: {transfer_ix.program_id}")
+    print(f"   Data length: {len(transfer_ix.data)} bytes")
+    print(f"   Data first byte (discriminator): {transfer_ix.data[0]}")
+    print(f"   Accounts: {len(transfer_ix.accounts)}")
+    for i, acc in enumerate(transfer_ix.accounts):
+        pubkey_str = str(acc.pubkey)  # Convert to string for display
+        print(f"     Account {i}: {pubkey_str}, signer={acc.is_signer}, writable={acc.is_writable}")
+    if len(transfer_ix.data) >= 9:
+        amount_from_data = int.from_bytes(transfer_ix.data[1:9], 'little')
+        print(f"   Amount from data: {amount_from_data} lamports")
+    print(f"   Expected amount: {amount_lamports} lamports")
+    
     # Create message with blockhash (new solders API)
+    # The fee payer (from_pubkey) will be automatically added as the first account
     message = Message.new_with_blockhash([transfer_ix], from_pubkey, recent_blockhash)
+    
+    # Debug: Check message account keys
+    print(f"🔍 Message account keys:")
+    for i, key in enumerate(message.account_keys):
+        key_str = str(key)  # Convert to string for display
+        print(f"   Message account {i}: {key_str}")
+    
+    # Debug: Check instruction accounts after message creation
+    print(f"🔍 Instruction accounts after message creation:")
+    for i, acc in enumerate(transfer_ix.accounts):
+        pubkey_str = str(acc.pubkey)  # Convert to string for display
+        print(f"   Instruction account {i}: {pubkey_str}, signer={acc.is_signer}, writable={acc.is_writable}")
     
     # Create unsigned transaction and sign it
     transaction = Transaction.new_unsigned(message)
     transaction.sign([wallet], recent_blockhash)
     
-    # Send transaction via RPC
-    print(f"📤 Sending transaction...")
+    # Test: Try to simulate the transaction locally to verify it's valid
     try:
-        # Serialize transaction to base64
-        tx_bytes = bytes(transaction)
-        import base64
-        tx_base64 = base64.b64encode(tx_bytes).decode('utf-8')
-        
-        # Send using JSON-RPC
-        send_payload = {
+        simulate_payload = {
             "jsonrpc": "2.0",
             "id": 3,
-            "method": "sendTransaction",
+            "method": "simulateTransaction",
             "params": [
-                tx_base64,
+                base64.b64encode(bytes(transaction)).decode('utf-8'),
                 {
                     "encoding": "base64",
-                    "skipPreflight": False,
-                    "preflightCommitment": "confirmed",
-                    "maxRetries": 3
+                    "commitment": "confirmed"
                 }
             ]
         }
+        simulate_response = requests.post(rpc_url, json=simulate_payload, timeout=10)
+        simulate_data = simulate_response.json()
         
-        send_response = requests.post(rpc_url, json=send_payload, timeout=30)
-        send_data = send_response.json()
-        
-        if "error" in send_data:
-            raise ValueError(f"RPC error: {send_data['error']}")
-        
-        signature = send_data.get("result")
-        if not signature:
-            raise ValueError(f"Unexpected response: {send_data}")
-        
-        print(f"✅ Transaction sent! Signature: {signature}")
-        
-        # Wait for confirmation
-        print("⏳ Waiting for confirmation...")
-        max_attempts = 30
-        for attempt in range(max_attempts):
-            try:
-                status_payload = {
-                    "jsonrpc": "2.0",
-                    "id": 4 + attempt,
-                    "method": "getSignatureStatuses",
-                    "params": [[signature]]
-                }
-                status_response = requests.post(rpc_url, json=status_payload, timeout=10)
-                status_data = status_response.json()
-                statuses = status_data.get("result", {}).get("value", [])
-                
-                if statuses and len(statuses) > 0:
-                    status = statuses[0]
-                    if status and status.get("err") is None:
-                        print(f"✅ Transaction confirmed!")
-                        return signature
-                    elif status and status.get("err"):
-                        raise ValueError(f"Transaction failed: {status.get('err')}")
-                
-                time.sleep(1)
-            except Exception as e:
-                if attempt < max_attempts - 1:
-                    time.sleep(1)
-                    continue
-                else:
-                    print(f"⚠️  Could not confirm transaction, but signature is: {signature}")
-                    return signature
-        
-        print(f"⚠️  Confirmation timeout, but signature is: {signature}")
-        return signature
-        
+        if "error" in simulate_data:
+            print(f"⚠️  Transaction simulation failed: {simulate_data['error']}")
+        else:
+            sim_result = simulate_data.get("result", {})
+            if sim_result.get("value", {}).get("err"):
+                print(f"⚠️  Transaction simulation error: {sim_result['value']['err']}")
+            else:
+                print(f"✅ Transaction simulation successful (local test)")
     except Exception as e:
-        raise ValueError(f"Failed to send transaction: {e}")
+        print(f"⚠️  Could not simulate transaction locally: {e}")
+        print("   Proceeding anyway...")
+    
+    print(f"✅ SOL transaction built and signed")
+    print(f"   Transaction has {len(transaction.signatures)} signature(s)")
+    return transaction
+
+
+def build_x402_payment_header(transaction: Transaction, network: str = "devnet") -> str:
+    """
+    Build x402-compliant X-PAYMENT header from a signed transaction.
+    
+    Args:
+        transaction: Signed Solana transaction
+        network: Network name (devnet, mainnet-beta, etc.)
+        
+    Returns:
+        Base64-encoded x402 payment header string
+    """
+    # Serialize transaction to base64
+    # Use serialize() method which returns the wire format
+    try:
+        tx_bytes = bytes(transaction)
+    except Exception as e:
+        # Fallback: try serialize method if available
+        if hasattr(transaction, 'serialize'):
+            tx_bytes = transaction.serialize()
+        else:
+            raise ValueError(f"Could not serialize transaction: {e}")
+    
+    serialized_transaction = base64.b64encode(tx_bytes).decode('utf-8')
+    print(f"📦 Serialized transaction length: {len(tx_bytes)} bytes")
+    
+    # Build x402 payment payload
+    payment_payload = {
+        "x402Version": 1,
+        "scheme": "solana",
+        "network": network,
+        "payload": {
+            "serializedTransaction": serialized_transaction
+        }
+    }
+    
+    # Encode entire payload as base64
+    payload_json = json.dumps(payment_payload)
+    x402_header = base64.b64encode(payload_json.encode('utf-8')).decode('utf-8')
+    
+    return x402_header
 
 
 @tool
@@ -263,43 +469,80 @@ def ask_human_rpc(
         
         # Handle 402 Payment Required
         if response.status_code == 402:
-            print("💳 Payment required (402). Processing Solana payment...")
+            print("💳 Payment required (402). Processing x402 payment...")
             
             try:
-                # Parse payment details from response
-                # Debug: Log 402 response
+                # Parse x402 payment response
                 print(f"📊 402 Response Text: {response.text[:500]}")
                 try:
-                    payment_info = response.json()
+                    payment_response = response.json()
                 except json.JSONDecodeError as e:
                     raise ValueError(
                         f"Failed to parse 402 payment response. Response text: {response.text[:500]}, Error: {e}"
                     )
-                payment_address = payment_info.get("payment_address")
-                amount_sol = payment_info.get("amount")  # Amount in SOL
                 
-                if not payment_address or amount_sol is None:
+                # Extract payment object from response
+                payment_info = payment_response.get("payment", {})
+                if not payment_info:
                     raise ValueError(
-                        f"Invalid payment response. Expected 'payment_address' and 'amount'. "
-                        f"Got: {payment_info}"
+                        f"Invalid payment response. Expected 'payment' object. Got: {payment_response}"
                     )
                 
-                # Convert SOL to lamports (multiply by 1e9)
-                amount_lamports = int(amount_sol * 1_000_000_000)
+                # Determine payment type (SOL or USDC)
+                recipient_wallet = payment_info.get("recipientWallet")
+                token_account = payment_info.get("tokenAccount")
+                mint = payment_info.get("mint")
+                amount = payment_info.get("amount")
+                cluster = payment_info.get("cluster", "devnet")
                 
-                print(f"📋 Payment details:")
-                print(f"   Address: {payment_address}")
-                print(f"   Amount: {amount_sol} SOL ({amount_lamports} lamports)")
+                # Determine network for x402 header
+                network = "mainnet-beta" if "mainnet" in cluster else "devnet"
                 
-                # Send Solana payment
-                tx_signature = send_solana_payment(payment_address, amount_lamports)
+                transaction = None
                 
-                # Wait a moment for transaction to propagate
-                time.sleep(2)
+                if token_account and mint:
+                    # USDC payment
+                    print(f"📋 USDC Payment details:")
+                    print(f"   Token Account: {token_account}")
+                    print(f"   Mint: {mint}")
+                    print(f"   Amount: {amount} base units ({amount / 1_000_000} USDC)")
+                    
+                    if not amount:
+                        raise ValueError("USDC payment amount is required")
+                    
+                    # Build USDC transaction
+                    transaction = send_usdc_payment(token_account, amount, mint)
+                    
+                elif recipient_wallet and amount:
+                    # SOL payment
+                    amount_sol = payment_info.get("amountSOL")
+                    if amount_sol is None:
+                        # Amount might be in lamports
+                        amount_sol = amount / 1_000_000_000
+                    
+                    amount_lamports = int(amount) if amount >= 1_000_000 else int(amount_sol * 1_000_000_000)
+                    
+                    print(f"📋 SOL Payment details:")
+                    print(f"   Address: {recipient_wallet}")
+                    print(f"   Amount: {amount_sol} SOL ({amount_lamports} lamports)")
+                    
+                    # Build SOL transaction
+                    transaction = send_solana_payment(recipient_wallet, amount_lamports)
+                else:
+                    raise ValueError(
+                        f"Invalid payment response. Missing required fields. Got: {payment_info}"
+                    )
                 
-                # Retry the request with payment signature header (lowercase)
-                print(f"🔄 Retrying request with payment signature...")
-                headers["x-payment-signature"] = tx_signature
+                if not transaction:
+                    raise ValueError("Failed to build payment transaction")
+                
+                # Build x402-compliant payment header
+                print(f"🔨 Building x402 payment header...")
+                x402_header = build_x402_payment_header(transaction, network)
+                
+                # Retry the request with x402 X-PAYMENT header
+                print(f"🔄 Retrying request with x402 X-PAYMENT header...")
+                headers["X-PAYMENT"] = x402_header
                 
                 retry_response = requests.post(
                     human_rpc_url,
@@ -313,7 +556,7 @@ def ask_human_rpc(
                 print(f"📊 Response Headers: {dict(retry_response.headers)}")
                 print(f"📊 Response Text (first 500 chars): {retry_response.text[:500]}")
                 
-                if retry_response.status_code in [200, 202]:
+                if retry_response.status_code == 200:
                     print("✅ Human RPC analysis complete!")
                     # Handle empty responses gracefully
                     if not retry_response.text or len(retry_response.text.strip()) == 0:

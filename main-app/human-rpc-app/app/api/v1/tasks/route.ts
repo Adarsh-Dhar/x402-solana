@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
-import { Connection, PublicKey, LAMPORTS_PER_SOL, SystemProgram } from "@solana/web3.js"
+import { Connection, PublicKey, LAMPORTS_PER_SOL, SystemProgram, Transaction } from "@solana/web3.js"
+import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } from "@solana/spl-token"
 import { SOLANA_RPC_URL } from "@/lib/solanaConfig"
 import type { PrismaClient } from "@prisma/client"
 
@@ -8,12 +9,19 @@ export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 
 // Payment configuration
-const PRICE_SOL = 0.01 // 0.01 SOL payment required
+const PRICE_SOL = parseFloat(process.env.PAYMENT_AMOUNT_SOL || "0.01") // 0.01 SOL payment required
 const PRICE_LAMPORTS = PRICE_SOL * LAMPORTS_PER_SOL
+
+// USDC configuration (devnet USDC mint)
+const USDC_MINT_ADDRESS = process.env.USDC_MINT_ADDRESS || "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+const PRICE_USDC = parseInt(process.env.PAYMENT_AMOUNT_USDC || "100") // 100 = 0.0001 USDC (6 decimals)
 
 // Treasury wallet (uses staking wallet)
 const TREASURY_WALLET =
   process.env.STAKING_WALLET_ADDRESS || process.env.NEXT_PUBLIC_STAKING_WALLET || "11111111111111111111111111111111"
+
+// Payment type preference (SOL or USDC)
+const PAYMENT_TYPE = (process.env.PAYMENT_TYPE || "SOL").toUpperCase()
 
 // Lazy load prisma to catch initialization errors
 async function getPrisma(): Promise<PrismaClient> {
@@ -34,6 +42,204 @@ function getTaskModel(prisma: PrismaClient) {
   // Access task model directly - Prisma generates it at runtime
   const prismaAny = prisma as any
   return prismaAny.task
+}
+
+/**
+ * Get the associated token account address for the treasury wallet
+ */
+async function getTreasuryTokenAccount(mintAddress: string): Promise<PublicKey> {
+  const mint = new PublicKey(mintAddress)
+  const treasury = new PublicKey(TREASURY_WALLET)
+  return await getAssociatedTokenAddress(mint, treasury)
+}
+
+/**
+ * Return 402 Payment Required response with payment details
+ */
+function getPaymentRequiredResponse(paymentType: "SOL" | "USDC" = PAYMENT_TYPE as "SOL" | "USDC") {
+  if (paymentType === "USDC") {
+    // For USDC, we need to return token account and mint
+    return NextResponse.json(
+      {
+        payment: {
+          recipientWallet: TREASURY_WALLET,
+          tokenAccount: null, // Will be set dynamically
+          mint: USDC_MINT_ADDRESS,
+          amount: PRICE_USDC,
+          amountUSDC: PRICE_USDC / 1_000_000, // USDC has 6 decimals
+          cluster: SOLANA_RPC_URL.includes("devnet") ? "devnet" : "mainnet-beta",
+          message: "Send USDC to the token account",
+        },
+      },
+      {
+        status: 402,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+        },
+      }
+    )
+  } else {
+    // For SOL
+    return NextResponse.json(
+      {
+        payment: {
+          recipientWallet: TREASURY_WALLET,
+          amount: PRICE_LAMPORTS,
+          amountSOL: PRICE_SOL,
+          cluster: SOLANA_RPC_URL.includes("devnet") ? "devnet" : "mainnet-beta",
+          message: "Send SOL to the recipient wallet",
+        },
+      },
+      {
+        status: 402,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+        },
+      }
+    )
+  }
+}
+
+/**
+ * Verify USDC/SPL token payment on-chain
+ * Checks:
+ * 1. Transaction exists and is confirmed
+ * 2. Amount matches expected USDC amount
+ * 3. Recipient token account is the treasury's associated token account
+ */
+async function verifyUSDCPaymentOnChain(
+  signature: string,
+  expectedAmount: number,
+  expectedTokenAccount: PublicKey
+): Promise<boolean> {
+  try {
+    console.log("[Tasks API] Starting USDC payment verification...")
+    console.log("[Tasks API] Signature:", signature)
+    console.log("[Tasks API] Expected amount:", expectedAmount)
+    console.log("[Tasks API] Expected token account:", expectedTokenAccount.toBase58())
+    
+    const connection = new Connection(SOLANA_RPC_URL, "confirmed")
+    
+    // Get transaction
+    const tx = await connection.getTransaction(signature, {
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0,
+    })
+
+    if (!tx) {
+      console.error("[Tasks API] Transaction not found:", signature)
+      return false
+    }
+
+    // Check if transaction failed
+    if (tx.meta?.err) {
+      console.error("[Tasks API] Transaction failed:", tx.meta.err)
+      return false
+    }
+
+    // Verify SPL Token transfer instruction
+    // Handle both legacy and versioned transactions
+    const accountKeys = tx.transaction.message.getAccountKeys()
+    const staticAccountKeys = accountKeys.staticAccountKeys
+    const instructions = tx.transaction.message.compiledInstructions || 
+      (tx.transaction.message as any).instructions || []
+
+    let validTransfer = false
+    let transferAmount = 0
+
+    for (const ix of instructions) {
+      const programIdIndex = ix.programIdIndex
+      const programIdKey = staticAccountKeys[programIdIndex]
+
+      let programIdString: string | null = null
+      if (programIdKey) {
+        if (programIdKey.toBase58) {
+          programIdString = programIdKey.toBase58()
+        } else if (programIdKey.toString) {
+          programIdString = programIdKey.toString()
+        }
+      }
+
+      // Check if this is a Token Program instruction
+      if (programIdString === TOKEN_PROGRAM_ID.toBase58()) {
+        // SPL Token Transfer instruction layout:
+        // [0] = instruction type (3 for Transfer)
+        // [1-8] = amount (u64, little-endian)
+        if (ix.data) {
+          const dataBytes = typeof ix.data === 'string' 
+            ? Buffer.from(ix.data, 'base64') 
+            : Buffer.from(ix.data)
+          
+          if (dataBytes.length >= 9 && dataBytes[0] === 3) {
+            // Read the amount (u64 in little-endian, starts at byte 1)
+            transferAmount = Number(dataBytes.readBigUInt64LE(1))
+
+            // Verify accounts: [source, destination, owner]
+            const accountKeyIndexes = (ix as any).accountKeyIndexes || []
+            if (accountKeyIndexes.length >= 2) {
+              const destAccountIndex = accountKeyIndexes[1]
+              const destAccountKey = staticAccountKeys[destAccountIndex]
+
+              let destPubkey: string | null = null
+              if (destAccountKey) {
+                if (destAccountKey.toBase58) {
+                  destPubkey = destAccountKey.toBase58()
+                } else if (destAccountKey.toString) {
+                  destPubkey = destAccountKey.toString()
+                }
+              }
+
+              if (destPubkey === expectedTokenAccount.toBase58() && transferAmount >= expectedAmount) {
+                validTransfer = true
+                console.log(`[Tasks API] ✓ Valid USDC transfer: ${transferAmount / 1_000_000} USDC`)
+                break
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (!validTransfer) {
+      console.error("[Tasks API] No valid USDC transfer instruction found")
+      return false
+    }
+
+    // Verify using token balance changes
+    const postTokenBalances = tx.meta?.postTokenBalances ?? []
+    const preTokenBalances = tx.meta?.preTokenBalances ?? []
+
+    let amountReceived = 0
+    for (let i = 0; i < postTokenBalances.length; i++) {
+      const postBal = postTokenBalances[i]
+      const preBal = preTokenBalances.find(
+        (pre) => pre.accountIndex === postBal.accountIndex
+      )
+
+      // Get account key from transaction
+      const accountKeys = tx.transaction.message.getAccountKeys()
+      const allKeys = accountKeys.keySegments().flat()
+      const accountKey = allKeys[postBal.accountIndex]
+      
+      if (accountKey && accountKey.toBase58() === expectedTokenAccount.toBase58()) {
+        const postAmount = postBal.uiTokenAmount.amount
+        const preAmount = preBal?.uiTokenAmount.amount ?? "0"
+        amountReceived = Number(postAmount) - Number(preAmount)
+        break
+      }
+    }
+
+    if (amountReceived < expectedAmount) {
+      console.error(`[Tasks API] Insufficient payment: received ${amountReceived}, expected ${expectedAmount}`)
+      return false
+    }
+
+    console.log(`[Tasks API] USDC payment verified: ${amountReceived / 1_000_000} USDC received`)
+    return true
+  } catch (error: any) {
+    console.error("[Tasks API] USDC payment verification error:", error)
+    return false
+  }
 }
 
 /**
@@ -292,12 +498,177 @@ async function verifyPaymentOnChain(signature: string, expectedAmountLamports: n
   }
 }
 
+/**
+ * Parse X-PAYMENT header and verify/submit transaction
+ * Returns transaction signature if successful, null otherwise
+ */
+async function processX402Payment(
+  xPaymentHeader: string,
+  paymentType: "SOL" | "USDC" = PAYMENT_TYPE as "SOL" | "USDC"
+): Promise<{ signature: string; verified: boolean } | null> {
+  try {
+    console.log("[Tasks API] Processing X-PAYMENT header...")
+    
+    // Decode base64 and parse JSON
+    const paymentData = JSON.parse(
+      Buffer.from(xPaymentHeader, "base64").toString("utf-8")
+    ) as {
+      x402Version: number
+      scheme: string
+      network: string
+      payload: {
+        serializedTransaction: string
+      }
+    }
+
+    console.log("[Tasks API] Payment data:", {
+      version: paymentData.x402Version,
+      scheme: paymentData.scheme,
+      network: paymentData.network,
+    })
+
+    // Deserialize the transaction
+    const txBuffer = Buffer.from(paymentData.payload.serializedTransaction, "base64")
+    const tx = Transaction.from(txBuffer)
+
+    console.log("[Tasks API] Transaction deserialized successfully")
+
+    // Simulate the transaction BEFORE submitting
+    const connection = new Connection(SOLANA_RPC_URL, "confirmed")
+    console.log("[Tasks API] Simulating transaction...")
+    
+    try {
+      const simulation = await connection.simulateTransaction(tx)
+      if (simulation.value.err) {
+        console.error("[Tasks API] Simulation failed:", simulation.value.err)
+        return null
+      }
+      console.log("[Tasks API] ✓ Simulation successful")
+    } catch (simError) {
+      console.error("[Tasks API] Simulation error:", simError)
+      return null
+    }
+
+    // Verify transaction before submission
+    const treasuryPubkey = new PublicKey(TREASURY_WALLET)
+    let verified = false
+
+    if (paymentType === "USDC") {
+      // Verify USDC transfer instruction structure before submission
+      const treasuryTokenAccount = await getTreasuryTokenAccount(USDC_MINT_ADDRESS)
+      const instructions = tx.instructions
+      for (const ix of instructions) {
+        if (ix.programId.equals(TOKEN_PROGRAM_ID)) {
+          const dataBytes = ix.data
+          if (dataBytes.length >= 9 && dataBytes[0] === 3) {
+            const transferAmount = Number(dataBytes.readBigUInt64LE(1))
+            if (transferAmount >= PRICE_USDC) {
+              // Check recipient
+              if (ix.keys.length >= 2 && ix.keys[1].pubkey.equals(treasuryTokenAccount)) {
+                verified = true
+                break
+              }
+            }
+          }
+        }
+      }
+    } else {
+      // Verify SOL transfer
+      const instructions = tx.instructions
+      for (const ix of instructions) {
+        if (ix.programId.equals(SystemProgram.programId)) {
+          const dataBytes = ix.data
+          if (dataBytes.length >= 9) {
+            const transferAmount = Number(dataBytes.readBigUInt64LE(1))
+            if (transferAmount >= PRICE_LAMPORTS) {
+              // Check recipient
+              if (ix.keys.length >= 2 && ix.keys[1].pubkey.equals(treasuryPubkey)) {
+                verified = true
+                break
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if (!verified) {
+      console.error("[Tasks API] Transaction verification failed")
+      return null
+    }
+
+    // Submit the transaction
+    console.log("[Tasks API] Submitting transaction to network...")
+    const signature = await connection.sendRawTransaction(txBuffer, {
+      skipPreflight: false,
+      preflightCommitment: "confirmed",
+    })
+
+    console.log(`[Tasks API] Transaction submitted: ${signature}`)
+
+    // Wait for confirmation
+    const confirmation = await connection.confirmTransaction(signature, "confirmed")
+    if (confirmation.value.err) {
+      console.error("[Tasks API] Transaction failed on-chain:", confirmation.value.err)
+      return null
+    }
+
+    // Final verification on-chain
+    if (paymentType === "USDC") {
+      const treasuryTokenAccount = await getTreasuryTokenAccount(USDC_MINT_ADDRESS)
+      verified = await verifyUSDCPaymentOnChain(signature, PRICE_USDC, treasuryTokenAccount)
+    } else {
+      verified = await verifyPaymentOnChain(signature, PRICE_LAMPORTS)
+    }
+
+    if (!verified) {
+      console.error("[Tasks API] Final on-chain verification failed")
+      return null
+    }
+
+    console.log(`[Tasks API] Payment verified and confirmed: ${signature}`)
+    return { signature, verified: true }
+  } catch (error: any) {
+    console.error("[Tasks API] X-PAYMENT processing error:", error)
+    return null
+  }
+}
+
 export async function POST(req: Request) {
   console.log("[Tasks API] POST handler called")
   console.log("[Tasks API] Request URL:", req.url)
   console.log("[Tasks API] Request headers:", Object.fromEntries(req.headers.entries()))
 
   try {
+    // Check for X-PAYMENT header (x402 standard)
+    const xPaymentHeader = req.headers.get("X-PAYMENT") || req.headers.get("x-payment")
+    
+    // If no payment provided, return 402 Payment Required
+    if (!xPaymentHeader) {
+      console.log("[Tasks API] No X-PAYMENT header found, returning 402 Payment Required")
+      
+      // For USDC, we need to get the token account address
+      if (PAYMENT_TYPE === "USDC") {
+        try {
+          const treasuryTokenAccount = await getTreasuryTokenAccount(USDC_MINT_ADDRESS)
+          const response = getPaymentRequiredResponse("USDC")
+          const responseData = await response.json()
+          responseData.payment.tokenAccount = treasuryTokenAccount.toBase58()
+          return NextResponse.json(responseData, {
+            status: 402,
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+            },
+          })
+        } catch (error) {
+          console.error("[Tasks API] Error getting token account:", error)
+          return getPaymentRequiredResponse("USDC")
+        }
+      } else {
+        return getPaymentRequiredResponse("SOL")
+      }
+    }
+
     // Parse request body
     let body
     try {
@@ -325,9 +696,7 @@ export async function POST(req: Request) {
       rewardAmount,
       category,
       escrowAmount,
-      context,
-      paymentAmount,
-      paymentAddress
+      context
     } = body
 
     console.log("[Tasks API] Parsed request data:", {
@@ -339,8 +708,6 @@ export async function POST(req: Request) {
       category,
       escrowAmount,
       hasContext: !!context,
-      paymentAmount,
-      paymentAddress
     })
 
     if (!text) {
@@ -355,27 +722,52 @@ export async function POST(req: Request) {
       )
     }
 
-    // Store payment info (no verification for now)
-    const paymentInfo = paymentAmount && paymentAddress ? {
-      amount: paymentAmount,
-      address: paymentAddress,
-      currency: "SOL"
-    } : null
+    // Process x402 payment
+    console.log("[Tasks API] Processing x402 payment...")
+    const paymentResult = await processX402Payment(xPaymentHeader, PAYMENT_TYPE as "SOL" | "USDC")
+    
+    if (!paymentResult || !paymentResult.verified) {
+      console.error("[Tasks API] Payment verification failed")
+      return NextResponse.json(
+        { 
+          error: "Payment verification failed",
+          details: "Transaction could not be verified or submitted"
+        },
+        { 
+          status: 402,
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+          }
+        }
+      )
+    }
 
-    console.log("[Tasks API] Payment info received (not verified):", paymentInfo)
+    const paymentSignature = paymentResult.signature
+    console.log("[Tasks API] Payment verified successfully:", paymentSignature)
 
-    // 🚀 Process the task and save to database
+    // 🚀 Process the task and save to database (only after payment verification)
     console.log("[Tasks API] Saving task to database...")
     const prisma = await getPrisma()
 
     try {
+      // Store payment info
+      const paymentInfo = {
+        signature: paymentSignature,
+        amount: PAYMENT_TYPE === "USDC" ? PRICE_USDC : PRICE_LAMPORTS,
+        amountDisplay: PAYMENT_TYPE === "USDC" 
+          ? `${PRICE_USDC / 1_000_000} USDC` 
+          : `${PRICE_SOL} SOL`,
+        currency: PAYMENT_TYPE,
+        explorerUrl: `https://explorer.solana.com/tx/${paymentSignature}?cluster=${SOLANA_RPC_URL.includes("devnet") ? "devnet" : "mainnet-beta"}`,
+      }
+
       // TypeScript workaround: task model exists at runtime but types may not be recognized
       // This is safe as we verified the model exists after Prisma generation
       const task = await (prisma as PrismaClient & { task: any }).task.create({
         data: {
           text,
           taskType: task_type || "sentiment_analysis",
-          paymentSignature: null, // No payment verification for now
+          paymentSignature: paymentSignature, // Store verified payment signature
           status: "pending",
           agentName: agentName || null,
           reward: reward || null,
@@ -385,7 +777,7 @@ export async function POST(req: Request) {
           context: context ? {
             ...context,
             payment: paymentInfo
-          } : paymentInfo ? { payment: paymentInfo } : null,
+          } : { payment: paymentInfo },
           result: {
             message: "Task created and awaiting human review",
             timestamp: new Date().toISOString(),
@@ -407,6 +799,12 @@ export async function POST(req: Request) {
         task_id: task.id,
         sentiment: "POSITIVE", // Placeholder - would be actual analysis result
         confidence: 0.95, // Placeholder
+        paymentDetails: {
+          signature: paymentSignature,
+          amount: PAYMENT_TYPE === "USDC" ? PRICE_USDC / 1_000_000 : PRICE_SOL,
+          currency: PAYMENT_TYPE,
+          explorerUrl: `https://explorer.solana.com/tx/${paymentSignature}?cluster=${SOLANA_RPC_URL.includes("devnet") ? "devnet" : "mainnet-beta"}`,
+        },
       }
       
       console.log("[Tasks API] Returning response:", JSON.stringify(responseData))
@@ -414,7 +812,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         responseData,
         { 
-          status: 202,
+          status: 200, // 200 OK after successful payment verification
           headers: {
             "Content-Type": "application/json; charset=utf-8",
           }
