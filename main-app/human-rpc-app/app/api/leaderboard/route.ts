@@ -19,6 +19,12 @@ async function getPrisma(): Promise<PrismaClient> {
   }
 }
 
+// Helper to safely access user model
+function getUserModel(prisma: PrismaClient) {
+  const prismaAny = prisma as any
+  return prismaAny.user
+}
+
 /**
  * GET handler - Get leaderboard of users sorted by points
  */
@@ -26,25 +32,35 @@ export async function GET() {
   try {
     console.log("[Leaderboard API] GET handler called")
     const prisma = await getPrisma()
+    console.log("[Leaderboard API] Prisma client obtained")
+    
+    const userModel = getUserModel(prisma)
+    console.log("[Leaderboard API] User model accessed successfully")
 
-    // Fetch all users with points, ordered by points descending
-    const users = await prisma.user.findMany({
-      where: {
-        points: {
-          gte: 0, // Include users with 0 or more points
+    // Fetch all users ordered by points descending
+    let users
+    try {
+      users = await userModel.findMany({
+        select: {
+          id: true,
+          email: true,
+          points: true,
         },
-      },
-      select: {
-        id: true,
-        email: true,
-        points: true,
-      },
-      orderBy: {
-        points: "desc",
-      },
-    })
-
-    console.log(`[Leaderboard API] Found ${users.length} users`)
+        orderBy: {
+          points: "desc",
+        },
+      })
+      console.log(`[Leaderboard API] Found ${users.length} users`)
+    } catch (dbError: any) {
+      console.error("[Leaderboard API] Database query error:", dbError)
+      console.error("[Leaderboard API] Error details:", {
+        message: dbError?.message,
+        code: dbError?.code,
+        meta: dbError?.meta,
+        stack: dbError?.stack,
+      })
+      throw dbError
+    }
 
     // Calculate ranks (handle ties - same points = same rank)
     let currentRank = 1
@@ -82,9 +98,18 @@ export async function GET() {
     )
   } catch (error: any) {
     console.error("[Leaderboard API] GET error:", error)
+    console.error("[Leaderboard API] Error stack:", error?.stack)
+    console.error("[Leaderboard API] Error name:", error?.name)
+    console.error("[Leaderboard API] Error code:", error?.code)
+    
     return NextResponse.json(
       {
         error: `Failed to fetch leaderboard: ${error?.message || "Unknown error"}`,
+        details: process.env.NODE_ENV === "development" ? {
+          name: error?.name,
+          code: error?.code,
+          stack: error?.stack,
+        } : undefined,
       },
       {
         status: 500,
