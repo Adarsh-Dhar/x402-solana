@@ -2,6 +2,8 @@ import { NextResponse } from "next/server"
 import type { PrismaClient } from "@prisma/client"
 import { checkConsensus } from "@/lib/consensus-checker"
 import { calculateAndUpdatePoints } from "@/lib/points-calculator"
+import { createConsensusNotification } from "@/lib/notifications"
+import { getEligibleUserIdsForPhase } from "@/lib/consensus-eligibility"
 
 // Ensure this route always returns JSON, not HTML error pages
 export const dynamic = "force-dynamic"
@@ -161,6 +163,7 @@ export async function PATCH(
     }
 
     const { decision, userId: rawUserId, userEmail } = body
+    let resolvedUserId: string | null = null
 
     if (!decision || (decision !== "yes" && decision !== "no")) {
       return NextResponse.json(
@@ -194,6 +197,31 @@ export async function PATCH(
       )
     }
 
+    const currentPhase = existingTask.currentPhase || 1
+
+    // Enforce leaderboard-based eligibility for later phases
+    if (currentPhase > 1) {
+      if (!resolvedUserId) {
+        return NextResponse.json(
+          { error: "You must be logged in to participate in this voting phase." },
+          { status: 403 }
+        )
+      }
+
+      const eligibleUserIds = await getEligibleUserIdsForPhase(prisma, currentPhase)
+      if (eligibleUserIds && !eligibleUserIds.has(resolvedUserId)) {
+        return NextResponse.json(
+          {
+            error:
+              currentPhase === 2
+                ? "You are not in the top half of the leaderboard for Phase 2 voting."
+                : "You are not in the top 10% of the leaderboard for Phase 3 voting.",
+          },
+          { status: 403 }
+        )
+      }
+    }
+
     // Check if task is already completed
     if (existingTask.status === "completed") {
       return NextResponse.json(
@@ -211,8 +239,6 @@ export async function PATCH(
     }
 
     // Resolve userId from userEmail (or raw userId if passed explicitly)
-    let resolvedUserId: string | null = null
-
     if (rawUserId) {
       resolvedUserId = rawUserId
     } else if (userEmail) {
@@ -354,6 +380,36 @@ export async function PATCH(
         console.error("[Task API] Failed to calculate points:", pointsError?.message || pointsError)
       }
 
+      // Create notifications for all participating users (winners & losers)
+      try {
+        const votesForTask = await voteModel.findMany({
+          where: {
+            taskId,
+            userId: { not: null },
+          },
+        })
+
+        const pointsForWinner = 3
+        const pointsForLoser = -1
+
+        const notificationPromises = votesForTask.map((v: any) => {
+          if (!v.userId) return null
+          const isWinner = v.decision === consensusResult.decision
+          const pointsDelta = isWinner ? pointsForWinner : pointsForLoser
+
+          return createConsensusNotification(prisma, {
+            kind: isWinner ? "CONSENSUS_WIN" : "CONSENSUS_LOSS",
+            userId: v.userId,
+            taskId,
+            pointsDelta,
+          })
+        })
+
+        await Promise.all(notificationPromises.filter(Boolean) as Promise<unknown>[])
+      } catch (notifyError: any) {
+        console.error("[Task API] Failed to create consensus notifications:", notifyError?.message || notifyError)
+      }
+
       return NextResponse.json(
         {
           status: "Vote submitted - Consensus reached",
@@ -383,6 +439,100 @@ export async function PATCH(
     }
 
     // Consensus not reached yet
+    // If we have enough voters but threshold not met, handle phase transitions
+    if (!consensusResult.reached && currentVoteCount >= requiredVoters) {
+      // Capture current phase voters before any reset
+      const phaseVotes = await voteModel.findMany({
+        where: {
+          taskId,
+          userId: { not: null },
+        },
+      })
+
+      const phase = updatedTask.currentPhase || 1
+
+      if (phase === 1 || phase === 2) {
+        const nextPhase = phase + 1
+
+        // Reset votes and counts for the new phase
+        await voteModel.deleteMany({
+          where: { taskId },
+        })
+
+        await taskModel.update({
+          where: { id: taskId },
+          data: {
+            currentPhase: nextPhase,
+            currentVoteCount: 0,
+            yesVotes: 0,
+            noVotes: 0,
+          },
+        })
+
+        // Notify all participants of the phase transition
+        try {
+          const notificationPromises = phaseVotes.map((v: any) => {
+            if (!v.userId) return null
+            return createConsensusNotification(prisma, {
+              kind: "CONSENSUS_STAGE_CHANGE",
+              userId: v.userId,
+              taskId,
+              fromStage: phase,
+              toStage: nextPhase,
+            })
+          })
+
+          await Promise.all(notificationPromises.filter(Boolean) as Promise<unknown>[])
+        } catch (notifyError: any) {
+          console.error(
+            "[Task API] Failed to create phase-change consensus notifications:",
+            notifyError?.message || notifyError
+          )
+        }
+      } else if (phase === 3) {
+        // Final phase failed - mark as no-consensus and notify participants
+        try {
+          await taskModel.update({
+            where: { id: taskId },
+            data: {
+              status: "completed",
+              result: {
+                consensus: {
+                  requiredVoters,
+                  consensusThreshold,
+                  finalPhase: 3,
+                  currentVoteCount,
+                  yesVotes,
+                  noVotes,
+                  majorityPercentage: consensusResult.majorityPercentage,
+                  reached: false,
+                },
+                decision: null,
+                message: "Consensus was not reached after three voting phases.",
+                timestamp: new Date().toISOString(),
+              },
+            },
+          })
+
+          const notificationPromises = phaseVotes.map((v: any) => {
+            if (!v.userId) return null
+            return createConsensusNotification(prisma, {
+              kind: "CONSENSUS_FINAL_NO_CONSENSUS",
+              userId: v.userId,
+              taskId,
+            })
+          })
+
+          await Promise.all(notificationPromises.filter(Boolean) as Promise<unknown>[])
+        } catch (notifyError: any) {
+          console.error(
+            "[Task API] Failed to create final no-consensus notifications:",
+            notifyError?.message || notifyError
+          )
+        }
+      }
+    }
+
     return NextResponse.json(
       {
         status: "Vote submitted",
@@ -407,9 +557,18 @@ export async function PATCH(
     )
   } catch (error: any) {
     console.error("[Task API] PATCH error:", error)
+
+    // Return a safe, user-friendly error message instead of leaking internal details
+    const isPrismaValidationError =
+      typeof error?.name === "string" && error.name.includes("PrismaClientValidationError")
+
+    const message = isPrismaValidationError
+      ? "We hit a configuration issue while processing this vote. Please try again later while we finalize the consensus upgrade."
+      : "Failed to submit decision due to an unexpected server error. Please try again."
+
     return NextResponse.json(
       {
-        error: `Failed to submit decision: ${error?.message || "Unknown error"}`,
+        error: message,
       },
       {
         status: 500,

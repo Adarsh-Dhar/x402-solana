@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { motion } from "framer-motion"
+import { motion, AnimatePresence } from "framer-motion"
 import { Bell, Cpu, LogOut, Trophy } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -39,18 +39,20 @@ export default function Header({
         </button>
 
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" className="relative hover:bg-muted" onClick={onNotificationClick}>
-            <Bell className="h-5 w-5 text-muted-foreground" />
-            {hasUrgentNotification && (
-              <motion.span
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full bg-[var(--alert-red)]"
-              >
-                <span className="absolute inset-0 animate-ping rounded-full bg-[var(--alert-red)] opacity-75" />
-              </motion.span>
-            )}
-          </Button>
+          <div className="relative">
+            <Button variant="ghost" size="icon" className="relative hover:bg-muted" onClick={onNotificationClick}>
+              <Bell className="h-5 w-5 text-muted-foreground" />
+              {hasUrgentNotification && (
+                <motion.span
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full bg-[var(--alert-red)]"
+                >
+                  <span className="absolute inset-0 animate-ping rounded-full bg-[var(--alert-red)] opacity-75" />
+                </motion.span>
+              )}
+            </Button>
+          </div>
 
           <Button
             asChild

@@ -403,10 +403,21 @@ def poll_task_status(task_id: str, max_wait_seconds: Optional[int] = None, poll_
         
         try:
             response = requests.get(task_url, timeout=10)
-            
+
+            # Hard 404 → task truly missing
             if response.status_code == 404:
                 raise ValueError(f"Task {task_id} not found")
-            
+
+            # Treat 5xx as transient server issues: log and keep polling
+            if 500 <= response.status_code < 600:
+                print(
+                    f"⚠️  Polling error (server {response.status_code}). "
+                    f"Response (truncated): {response.text[:120]}"
+                )
+                time.sleep(poll_interval)
+                continue
+
+            # Any other non-200 (e.g. 4xx) is treated as fatal
             if response.status_code != 200:
                 raise ValueError(
                     f"Failed to poll task status. Status: {response.status_code}, "

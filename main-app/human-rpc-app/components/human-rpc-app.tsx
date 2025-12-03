@@ -37,7 +37,18 @@ export interface Task {
 export default function HumanRPCApp() {
   const [currentView, setCurrentView] = useState<ViewType>("dashboard")
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
-  const [hasUrgentNotification, setHasUrgentNotification] = useState(true)
+  const [hasUrgentNotification, setHasUrgentNotification] = useState(false)
+  const [unreadNotifications, setUnreadNotifications] = useState(0)
+  const [notifications, setNotifications] = useState<
+    {
+      id: string
+      title: string
+      body: string
+      type: string
+      createdAt: string
+      isRead: boolean
+    }[]
+  >([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -72,6 +83,43 @@ export default function HumanRPCApp() {
     return () => clearInterval(interval)
   }, [])
 
+  // Fetch notifications for current user
+  useEffect(() => {
+    const fetchNotifications = async () => {
+      try {
+        const response = await fetch("/api/notifications")
+        if (!response.ok) return
+        const data = await response.json()
+        const items = (data.notifications || []) as typeof notifications
+        setNotifications(items)
+        const unreadCount = items.filter((n) => !n.isRead).length
+        setUnreadNotifications(unreadCount)
+        setHasUrgentNotification(unreadCount > 0)
+      } catch (err) {
+        console.error("Error fetching notifications:", err)
+      }
+    }
+
+    fetchNotifications()
+    const interval = setInterval(fetchNotifications, 15000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const handleNotificationClick = async () => {
+    setHasUrgentNotification(false)
+    setUnreadNotifications(0)
+    try {
+      await fetch("/api/notifications", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      })
+    } catch (err) {
+      console.error("Error marking notifications as read:", err)
+    }
+  }
+
   const handleTaskSelect = (taskId: string) => {
     setSelectedTaskId(taskId)
     setCurrentView("task-details")
@@ -96,7 +144,7 @@ export default function HumanRPCApp() {
             onProfileClick={() => handleNavigate("profile")}
             onLogoClick={() => handleNavigate("dashboard")}
             hasUrgentNotification={hasUrgentNotification}
-            onNotificationClick={() => setHasUrgentNotification(false)}
+            onNotificationClick={handleNotificationClick}
           />
         )}
       </AnimatePresence>

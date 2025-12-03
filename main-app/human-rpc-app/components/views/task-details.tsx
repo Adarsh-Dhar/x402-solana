@@ -9,6 +9,11 @@ import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import type { Task } from "../human-rpc-app"
 
+interface RewardsMetadata {
+  winnersCount: number
+  totalLamportsDistributed: number
+}
+
 interface TaskDetailsProps {
   task: Task
   onBack: () => void
@@ -123,12 +128,13 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
   const voteProgress = consensusInfo
     ? (consensusInfo.currentVoteCount / consensusInfo.requiredVoters) * 100
     : 0
-  const majorityPercentage = consensusInfo && consensusInfo.currentVoteCount > 0
-    ? (Math.max(consensusInfo.yesVotes, consensusInfo.noVotes) / consensusInfo.currentVoteCount) * 100
-    : 0
-  const thresholdPercentage = consensusInfo
-    ? consensusInfo.consensusThreshold * 100
-    : 51
+
+  const majorityPercentage =
+    consensusInfo && consensusInfo.currentVoteCount > 0
+      ? (Math.max(consensusInfo.yesVotes, consensusInfo.noVotes) / consensusInfo.currentVoteCount) * 100
+      : 0
+
+  const thresholdPercentage = consensusInfo ? consensusInfo.consensusThreshold * 100 : 51
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
@@ -241,38 +247,40 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
               </div>
             )}
 
-            {task.context?.data?.rewards && (
-              <div className="mt-6 rounded-lg border border-[var(--neon-green)]/30 bg-[var(--neon-green)]/5 p-4">
-                <h4 className="mb-3 text-sm font-semibold text-foreground">Rewards Distributed</h4>
-                <div className="grid gap-3 text-sm sm:grid-cols-3">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Total Winners</p>
-                    <p className="font-mono text-sm text-foreground">
-                      {task.context.data.rewards.winnersCount}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Total Distributed</p>
-                    <p className="font-mono text-sm text-[var(--neon-green)]">
-                      {(task.context.data.rewards.totalLamportsDistributed / 1_000_000_000).toFixed(4)} SOL
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Per Winner (approx)</p>
-                    <p className="font-mono text-sm text-[var(--neon-green)]">
-                      {task.context.data.rewards.winnersCount > 0
-                        ? (
-                            task.context.data.rewards.totalLamportsDistributed /
-                            task.context.data.rewards.winnersCount /
-                            1_000_000_000
-                          ).toFixed(4)
-                        : "0.0000"}{" "}
-                      SOL
-                    </p>
+            {(() => {
+              if (!task.context?.data?.rewards) return null
+
+              const rawRewards = task.context.data.rewards as unknown
+              if (!rawRewards || typeof rawRewards !== "object") {
+                return null
+              }
+
+              const rewards = rawRewards as RewardsMetadata
+              const totalWinners = rewards.winnersCount ?? 0
+              const totalLamports = rewards.totalLamportsDistributed ?? 0
+              const totalSol = totalLamports / 1_000_000_000
+              const perWinnerSol = totalWinners > 0 ? totalSol / totalWinners : 0
+
+              return (
+                <div className="mt-6 rounded-lg border border-[var(--neon-green)]/30 bg-[var(--neon-green)]/5 p-4">
+                  <h4 className="mb-3 text-sm font-semibold text-foreground">Rewards Distributed</h4>
+                  <div className="grid gap-3 text-sm sm:grid-cols-3">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Total Winners</p>
+                      <p className="font-mono text-sm text-foreground">{totalWinners}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Total Distributed</p>
+                      <p className="font-mono text-sm text-[var(--neon-green)]">{totalSol.toFixed(4)} SOL</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Per Winner (approx)</p>
+                      <p className="font-mono text-sm text-[var(--neon-green)]">{perWinnerSol.toFixed(4)} SOL</p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
+              )
+            })()}
           </div>
         </motion.div>
 
@@ -283,7 +291,7 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
           className="lg:col-span-2"
         >
           <div className="sticky top-24 rounded-xl border border-border bg-card/50 p-6 backdrop-blur-sm">
-            <h2 className="mb-6 text-center font-semibold text-foreground">Submit Your Decision</h2>
+            <h2 className="mb-4 text-center font-semibold text-foreground">Submit Your Decision</h2>
 
             {/* Consensus Progress */}
             {consensusInfo && task.status !== "completed" && (
@@ -327,7 +335,7 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
                     {thresholdPercentage.toFixed(1)}%
                   </span>
                 </div>
-                
+
                 {consensusInfo.aiCertainty && (
                   <div className="text-xs text-muted-foreground">
                     AI Certainty: {(consensusInfo.aiCertainty * 100).toFixed(1)}%

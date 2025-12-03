@@ -24,6 +24,7 @@ model User {
   stakeTransactionHash String?
   points              Int      @default(0)
   votes               Vote[]
+  notifications       Notification[]
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 }
@@ -47,7 +48,10 @@ model Task {
   currentVoteCount  Int      @default(0)
   yesVotes          Int      @default(0)
   noVotes           Int      @default(0)
-  votes              Vote[]
+  consensusStage    Int      @default(1)
+  currentPhase      Int      @default(1)
+  phaseMeta         Json?
+  votes             Vote[]
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 }
@@ -63,4 +67,18 @@ model Vote {
 
   @@index([taskId])
   @@index([userId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String
+  metadata  Json?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
 }
