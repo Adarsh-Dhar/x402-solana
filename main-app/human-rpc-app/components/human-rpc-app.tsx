@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import Dashboard from "./views/dashboard"
 import TaskDetails from "./views/task-details"
@@ -21,6 +21,11 @@ export interface Task {
   createdAt: string
   category: string
   escrowAmount: string
+  payment: {
+    amount: number | string
+    address: string
+    currency: string
+  } | null
   context: {
     type: string
     summary: string
@@ -28,134 +33,41 @@ export interface Task {
   }
 }
 
-const mockTasks: Task[] = [
-  {
-    id: "#8821",
-    agentName: "TradingBot-Alpha",
-    reward: "0.5 USDC",
-    rewardAmount: 0.5,
-    status: "open",
-    createdAt: "2 min ago",
-    category: "Trading",
-    escrowAmount: "1.0 USDC",
-    context: {
-      type: "trade_confirmation",
-      summary: "Confirm limit order execution for ETH/USDC pair at specified price threshold",
-      data: {
-        pair: "ETH/USDC",
-        action: "BUY",
-        amount: "2.5 ETH",
-        price: "$2,847.32",
-        slippage: "0.5%",
-        timestamp: "2024-12-02T14:32:00Z",
-      },
-    },
-  },
-  {
-    id: "#8822",
-    agentName: "DataMiner-X9",
-    reward: "0.75 USDC",
-    rewardAmount: 0.75,
-    status: "urgent",
-    createdAt: "5 min ago",
-    category: "Verification",
-    escrowAmount: "1.5 USDC",
-    context: {
-      type: "data_validation",
-      summary: "Verify extracted data accuracy from financial document",
-      data: {
-        source: "Q3 Earnings Report",
-        company: "TechCorp Inc.",
-        revenue: "$4.2B",
-        confidence: "87%",
-      },
-    },
-  },
-  {
-    id: "#8823",
-    agentName: "ContractBot-Legal",
-    reward: "1.2 USDC",
-    rewardAmount: 1.2,
-    status: "open",
-    createdAt: "12 min ago",
-    category: "Legal",
-    escrowAmount: "2.4 USDC",
-    context: {
-      type: "clause_verification",
-      summary: "Review and confirm interpretation of contract termination clause",
-      data: {
-        clause: "Section 8.2",
-        interpretation: "30-day notice required",
-        jurisdiction: "Delaware",
-      },
-    },
-  },
-  {
-    id: "#8824",
-    agentName: "SentimentAI-Pro",
-    reward: "0.3 USDC",
-    rewardAmount: 0.3,
-    status: "open",
-    createdAt: "18 min ago",
-    category: "Analysis",
-    escrowAmount: "0.6 USDC",
-    context: {
-      type: "sentiment_check",
-      summary: "Validate sentiment classification of social media mentions",
-      data: {
-        platform: "Twitter/X",
-        mentions: 1247,
-        sentiment: "Bullish",
-        confidence: "72%",
-      },
-    },
-  },
-  {
-    id: "#8825",
-    agentName: "SecurityBot-Zero",
-    reward: "2.0 USDC",
-    rewardAmount: 2.0,
-    status: "urgent",
-    createdAt: "1 min ago",
-    category: "Security",
-    escrowAmount: "4.0 USDC",
-    context: {
-      type: "threat_assessment",
-      summary: "Confirm flagged transaction pattern as potential security threat",
-      data: {
-        txHash: "0x7f9a...3e2b",
-        riskLevel: "HIGH",
-        pattern: "Unusual withdrawal sequence",
-        flaggedAmount: "$45,000",
-      },
-    },
-  },
-  {
-    id: "#8826",
-    agentName: "PriceOracle-V2",
-    reward: "0.4 USDC",
-    rewardAmount: 0.4,
-    status: "open",
-    createdAt: "25 min ago",
-    category: "Oracle",
-    escrowAmount: "0.8 USDC",
-    context: {
-      type: "price_verification",
-      summary: "Verify real-world asset price for on-chain oracle update",
-      data: {
-        asset: "Gold (XAU)",
-        proposedPrice: "$2,043.50/oz",
-        source: "LBMA",
-        deviation: "0.12%",
-      },
-    },
-  },
-]
-
 export default function HumanRPCApp() {
   const [currentView, setCurrentView] = useState<ViewType>("dashboard")
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [hasUrgentNotification, setHasUrgentNotification] = useState(true)
+  const [tasks, setTasks] = useState<Task[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  // Fetch tasks from API
+  useEffect(() => {
+    const fetchTasks = async () => {
+      try {
+        setIsLoading(true)
+        setError(null)
+        const response = await fetch("/api/v1/tasks")
+        if (!response.ok) {
+          throw new Error(`Failed to fetch tasks: ${response.statusText}`)
+        }
+        const data = await response.json()
+        setTasks(data)
+      } catch (err) {
+        console.error("Error fetching tasks:", err)
+        setError(err instanceof Error ? err.message : "Failed to load tasks")
+        setTasks([]) // Set empty array on error
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchTasks()
+    
+    // Optionally refresh tasks periodically (every 30 seconds)
+    const interval = setInterval(fetchTasks, 30000)
+    return () => clearInterval(interval)
+  }, [])
 
   const handleTaskSelect = (taskId: string) => {
     setSelectedTaskId(taskId)
@@ -169,7 +81,7 @@ export default function HumanRPCApp() {
     }
   }
 
-  const selectedTask = mockTasks.find((t) => t.id === selectedTaskId)
+  const selectedTask = tasks.find((t) => t.id === selectedTaskId)
 
   const showHeader = currentView !== "login" && currentView !== "register"
 
@@ -195,7 +107,14 @@ export default function HumanRPCApp() {
           transition={{ duration: 0.3 }}
           className={showHeader ? "pt-20" : ""}
         >
-          {currentView === "dashboard" && <Dashboard tasks={mockTasks} onTaskSelect={handleTaskSelect} />}
+          {currentView === "dashboard" && (
+            <Dashboard 
+              tasks={tasks} 
+              onTaskSelect={handleTaskSelect}
+              isLoading={isLoading}
+              error={error}
+            />
+          )}
           {currentView === "task-details" && selectedTask && (
             <TaskDetails task={selectedTask} onBack={() => handleNavigate("dashboard")} />
           )}

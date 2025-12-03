@@ -14,6 +14,7 @@ from langchain.tools import tool
 from solders.keypair import Keypair
 from solders.system_program import transfer, TransferParams
 from solders.transaction import Transaction
+from solders.message import Message
 from solders.pubkey import Pubkey
 from solders.hash import Hash
 import base58
@@ -122,10 +123,12 @@ def send_solana_payment(payment_address: str, amount_lamports: int) -> str:
         )
     )
     
-    # Create and sign transaction
-    transaction = Transaction.new_with_payer([transfer_ix], from_pubkey)
-    transaction.recent_blockhash = recent_blockhash
-    transaction.sign([wallet], from_pubkey)
+    # Create message with blockhash (new solders API)
+    message = Message.new_with_blockhash([transfer_ix], from_pubkey, recent_blockhash)
+    
+    # Create unsigned transaction and sign it
+    transaction = Transaction.new_unsigned(message)
+    transaction.sign([wallet], recent_blockhash)
     
     # Send transaction via RPC
     print(f"📤 Sending transaction...")
@@ -203,13 +206,27 @@ def send_solana_payment(payment_address: str, amount_lamports: int) -> str:
 
 
 @tool
-def ask_human_rpc(text: str) -> dict:
+def ask_human_rpc(
+    text: str,
+    agentName: str = "SentimentAI-Pro",
+    reward: str = "0.3 USDC",
+    rewardAmount: float = 0.3,
+    category: str = "Analysis",
+    escrowAmount: str = "0.6 USDC",
+    context: dict = None
+) -> dict:
     """
     Ask the Human RPC API to analyze text. If payment is required (HTTP 402),
     automatically handle the Solana payment and retry the request.
     
     Args:
         text: The text to analyze for sentiment
+        agentName: Name of the agent creating the task
+        reward: Reward amount as string (e.g., "0.3 USDC")
+        rewardAmount: Reward amount as float
+        category: Category of the task (e.g., "Analysis", "Trading")
+        escrowAmount: Escrow amount as string (e.g., "0.6 USDC")
+        context: Context dictionary with type, summary, and data fields
         
     Returns:
         Dictionary with sentiment analysis result from Human RPC API
@@ -218,12 +235,23 @@ def ask_human_rpc(text: str) -> dict:
     
     print(f"🌐 Calling Human RPC API: {human_rpc_url}")
     print(f"📝 Text to analyze: \"{text}\"")
+    print(f"🤖 Agent: {agentName}")
+    print(f"💰 Reward: {reward}")
     
     # Prepare the request payload
     payload = {
         "text": text,
-        "task_type": "sentiment_analysis"
+        "task_type": "sentiment_analysis",
+        "agentName": agentName,
+        "reward": reward,
+        "rewardAmount": rewardAmount,
+        "category": category,
+        "escrowAmount": escrowAmount,
     }
+    
+    # Add context if provided
+    if context:
+        payload["context"] = context
     
     headers = {
         "Content-Type": "application/json"
@@ -239,7 +267,14 @@ def ask_human_rpc(text: str) -> dict:
             
             try:
                 # Parse payment details from response
-                payment_info = response.json()
+                # Debug: Log 402 response
+                print(f"📊 402 Response Text: {response.text[:500]}")
+                try:
+                    payment_info = response.json()
+                except json.JSONDecodeError as e:
+                    raise ValueError(
+                        f"Failed to parse 402 payment response. Response text: {response.text[:500]}, Error: {e}"
+                    )
                 payment_address = payment_info.get("payment_address")
                 amount_sol = payment_info.get("amount")  # Amount in SOL
                 
@@ -273,13 +308,30 @@ def ask_human_rpc(text: str) -> dict:
                     timeout=30
                 )
                 
+                # Debug: Log response details
+                print(f"📊 Response Status: {retry_response.status_code}")
+                print(f"📊 Response Headers: {dict(retry_response.headers)}")
+                print(f"📊 Response Text (first 500 chars): {retry_response.text[:500]}")
+                
                 if retry_response.status_code in [200, 202]:
                     print("✅ Human RPC analysis complete!")
-                    return retry_response.json()
+                    # Handle empty responses gracefully
+                    if not retry_response.text or len(retry_response.text.strip()) == 0:
+                        raise ValueError(
+                            f"Empty response body received. Status: {retry_response.status_code}, "
+                            f"Headers: {dict(retry_response.headers)}"
+                        )
+                    try:
+                        return retry_response.json()
+                    except json.JSONDecodeError as e:
+                        raise ValueError(
+                            f"Failed to parse JSON response. Status: {retry_response.status_code}, "
+                            f"Response text: {retry_response.text[:500]}, Error: {e}"
+                        )
                 else:
                     raise ValueError(
                         f"Request failed after payment. Status: {retry_response.status_code}, "
-                        f"Response: {retry_response.text}"
+                        f"Response: {retry_response.text[:500]}"
                     )
                     
             except Exception as e:
@@ -288,11 +340,31 @@ def ask_human_rpc(text: str) -> dict:
         # Handle other status codes
         elif response.status_code in [200, 202]:
             print("✅ Human RPC analysis complete!")
-            return response.json()
+            # Debug: Log response details
+            print(f"📊 Response Status: {response.status_code}")
+            print(f"📊 Response Text (first 500 chars): {response.text[:500]}")
+            
+            # Handle empty responses gracefully
+            if not response.text or len(response.text.strip()) == 0:
+                raise ValueError(
+                    f"Empty response body received. Status: {response.status_code}, "
+                    f"Headers: {dict(response.headers)}"
+                )
+            try:
+                return response.json()
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    f"Failed to parse JSON response. Status: {response.status_code}, "
+                    f"Response text: {response.text[:500]}, Error: {e}"
+                )
         else:
+            # Debug: Log error response details
+            print(f"❌ Error Response Status: {response.status_code}")
+            print(f"❌ Error Response Headers: {dict(response.headers)}")
+            print(f"❌ Error Response Text: {response.text[:500]}")
             raise ValueError(
                 f"Unexpected status code: {response.status_code}. "
-                f"Response: {response.text}"
+                f"Response: {response.text[:500]}"
             )
             
     except requests.exceptions.RequestException as e:

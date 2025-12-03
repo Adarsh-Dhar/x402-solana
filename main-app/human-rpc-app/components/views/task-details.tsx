@@ -114,6 +114,25 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
                 </div>
               </div>
             </div>
+            {task.payment && (
+              <div className="mt-6 rounded-lg border border-[var(--solana-purple)]/30 bg-[var(--solana-purple)]/5 p-4">
+                <h4 className="mb-3 text-sm font-semibold text-foreground">Payment Information</h4>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Amount</span>
+                    <span className="font-mono text-sm font-semibold text-[var(--solana-purple)]">
+                      {task.payment.amount} {task.payment.currency}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Address</span>
+                    <span className="font-mono text-xs text-foreground break-all text-right max-w-[200px]">
+                      {task.payment.address}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </motion.div>
 

@@ -55,6 +55,17 @@ export default function TaskCard({ task, onSelect }: TaskCardProps) {
         <div className="font-mono text-lg font-bold text-[var(--neon-green)]">{task.reward}</div>
       </div>
 
+      {task.payment && (
+        <div className="mb-4 rounded-lg border border-[var(--solana-purple)]/30 bg-[var(--solana-purple)]/5 p-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-muted-foreground">Payment Required:</span>
+            <span className="font-mono font-semibold text-[var(--solana-purple)]">
+              {task.payment.amount} {task.payment.currency}
+            </span>
+          </div>
+        </div>
+      )}
+
       <Button
         onClick={onSelect}
         className="w-full bg-muted font-medium text-foreground transition-all group-hover:bg-[var(--neon-green)] group-hover:text-background"

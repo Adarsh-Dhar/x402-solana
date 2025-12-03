@@ -8,9 +8,11 @@ import type { Task } from "../human-rpc-app"
 interface DashboardProps {
   tasks: Task[]
   onTaskSelect: (taskId: string) => void
+  isLoading?: boolean
+  error?: string | null
 }
 
-export default function Dashboard({ tasks, onTaskSelect }: DashboardProps) {
+export default function Dashboard({ tasks, onTaskSelect, isLoading = false, error = null }: DashboardProps) {
   const openTasks = tasks.filter((t) => t.status !== "completed")
   const urgentTasks = tasks.filter((t) => t.status === "urgent")
 
@@ -20,6 +22,27 @@ export default function Dashboard({ tasks, onTaskSelect }: DashboardProps) {
         <h1 className="mb-2 text-2xl font-bold text-foreground sm:text-3xl">Open Tasks</h1>
         <p className="text-muted-foreground">AI agents need your confirmation. Make decisions, earn rewards.</p>
       </motion.div>
+
+      {error && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-4 rounded-lg border border-red-500/50 bg-red-500/10 p-4 text-red-400"
+        >
+          <p className="font-semibold">Error loading tasks</p>
+          <p className="text-sm">{error}</p>
+        </motion.div>
+      )}
+
+      {isLoading && !error && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="mb-8 text-center text-muted-foreground"
+        >
+          <p>Loading tasks...</p>
+        </motion.div>
+      )}
 
       <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -64,23 +87,35 @@ export default function Dashboard({ tasks, onTaskSelect }: DashboardProps) {
         </div>
       </motion.div>
 
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 0.2 }}
-        className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
-      >
-        {tasks.map((task, index) => (
-          <motion.div
-            key={task.id}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 * index }}
-          >
-            <TaskCard task={task} onSelect={() => onTaskSelect(task.id)} />
-          </motion.div>
-        ))}
-      </motion.div>
+      {!isLoading && !error && tasks.length === 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-xl border border-border bg-card/50 p-8 text-center backdrop-blur-sm"
+        >
+          <p className="text-muted-foreground">No tasks available. Tasks will appear here when agents need human review.</p>
+        </motion.div>
+      )}
+
+      {!isLoading && !error && tasks.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.2 }}
+          className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+        >
+          {tasks.map((task, index) => (
+            <motion.div
+              key={task.id}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.1 * index }}
+            >
+              <TaskCard task={task} onSelect={() => onTaskSelect(task.id)} />
+            </motion.div>
+          ))}
+        </motion.div>
+      )}
     </div>
   )
 }

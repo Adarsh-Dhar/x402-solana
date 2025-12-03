@@ -14,7 +14,7 @@ from human_rpc_tool import ask_human_rpc
 load_dotenv()
 
 # Confidence threshold for triggering Human RPC
-CONFIDENCE_THRESHOLD = 0.70
+CONFIDENCE_THRESHOLD = 0.99
 
 
 def integrated_analysis(text: str) -> dict:
@@ -50,9 +50,31 @@ def integrated_analysis(text: str) -> dict:
             print("=" * 60)
             print()
             
-            # Step 3: Call Human RPC tool
+            # Step 3: Call Human RPC tool with full task metadata
             try:
-                human_result = ask_human_rpc.invoke({"text": text})
+                # Prepare context with sentiment analysis details
+                context = {
+                    "type": "sentiment_check",
+                    "summary": f"Validate sentiment classification. AI confidence: {confidence:.3f}",
+                    "data": {
+                        "originalText": text,
+                        "aiSentiment": ai_result["sentiment"],
+                        "aiConfidence": confidence,
+                        "platform": "Integrated Agent",
+                        "requiresHumanReview": True,
+                    }
+                }
+                
+                # Call Human RPC with full metadata
+                human_result = ask_human_rpc.invoke({
+                    "text": text,
+                    "agentName": "SentimentAI-Pro",
+                    "reward": "0.3 USDC",
+                    "rewardAmount": 0.3,
+                    "category": "Analysis",
+                    "escrowAmount": "0.6 USDC",
+                    "context": context
+                })
                 
                 print()
                 print("=" * 60)
