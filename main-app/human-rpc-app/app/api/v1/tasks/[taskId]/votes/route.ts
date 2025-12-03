@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import type { PrismaClient } from "@prisma/client"
 import { checkConsensus } from "@/lib/consensus-checker"
+import { calculateAndUpdatePoints } from "@/lib/points-calculator"
 
 // Ensure this route always returns JSON, not HTML error pages
 export const dynamic = "force-dynamic"
@@ -218,6 +219,14 @@ export async function POST(
       })
 
       console.log("[Votes API] Task completed with consensus:", completedTask.id)
+
+      // Calculate and update user points based on vote accuracy
+      try {
+        await calculateAndUpdatePoints(prisma, taskId, consensusResult.decision)
+      } catch (pointsError: any) {
+        // Log error but don't fail the request - points calculation is non-critical
+        console.error("[Votes API] Failed to calculate points:", pointsError?.message || pointsError)
+      }
 
       return NextResponse.json(
         {
