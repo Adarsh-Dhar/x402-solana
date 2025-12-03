@@ -240,6 +240,39 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
                 </div>
               </div>
             )}
+
+            {task.context?.data?.rewards && (
+              <div className="mt-6 rounded-lg border border-[var(--neon-green)]/30 bg-[var(--neon-green)]/5 p-4">
+                <h4 className="mb-3 text-sm font-semibold text-foreground">Rewards Distributed</h4>
+                <div className="grid gap-3 text-sm sm:grid-cols-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Total Winners</p>
+                    <p className="font-mono text-sm text-foreground">
+                      {task.context.data.rewards.winnersCount}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Total Distributed</p>
+                    <p className="font-mono text-sm text-[var(--neon-green)]">
+                      {(task.context.data.rewards.totalLamportsDistributed / 1_000_000_000).toFixed(4)} SOL
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Per Winner (approx)</p>
+                    <p className="font-mono text-sm text-[var(--neon-green)]">
+                      {task.context.data.rewards.winnersCount > 0
+                        ? (
+                            task.context.data.rewards.totalLamportsDistributed /
+                            task.context.data.rewards.winnersCount /
+                            1_000_000_000
+                          ).toFixed(4)
+                        : "0.0000"}{" "}
+                      SOL
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </motion.div>
 

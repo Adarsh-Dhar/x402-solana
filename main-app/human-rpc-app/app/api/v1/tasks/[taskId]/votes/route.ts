@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import type { PrismaClient } from "@prisma/client"
 import { checkConsensus } from "@/lib/consensus-checker"
 import { calculateAndUpdatePoints } from "@/lib/points-calculator"
+import { distributeSolRewardToWinners, TASK_REWARD_LAMPORTS } from "@/lib/rewards-payout"
 
 // Ensure this route always returns JSON, not HTML error pages
 export const dynamic = "force-dynamic"
@@ -194,6 +195,7 @@ export async function POST(
     if (consensusResult.reached && consensusResult.decision) {
       const sentiment = consensusResult.decision === "yes" ? "POSITIVE" : "NEGATIVE"
       const confidence = 1.0 // Consensus decisions have full confidence
+      const decision = consensusResult.decision
 
       const completedTask = await taskModel.update({
         where: { id: taskId },
@@ -202,9 +204,11 @@ export async function POST(
           result: {
             sentiment,
             confidence,
-            decision: consensusResult.decision,
+            decision,
             timestamp: new Date().toISOString(),
-            message: `Consensus reached: ${consensusResult.decision.toUpperCase()} with ${(consensusResult.majorityPercentage * 100).toFixed(1)}% agreement`,
+            message: `Consensus reached: ${decision.toUpperCase()} with ${(consensusResult.majorityPercentage * 100).toFixed(
+              1
+            )}% agreement`,
             consensus: {
               requiredVoters,
               consensusThreshold,
@@ -219,6 +223,35 @@ export async function POST(
       })
 
       console.log("[Votes API] Task completed with consensus:", completedTask.id)
+
+      // Distribute SOL rewards to winning voters (those whose decision matches consensus)
+      let rewards = null
+      try {
+        rewards = await distributeSolRewardToWinners(
+          prisma,
+          taskId,
+          decision,
+          TASK_REWARD_LAMPORTS
+        )
+
+        // Persist rewards metadata on the task result for UI/inspection
+        if (rewards) {
+          await taskModel.update({
+            where: { id: taskId },
+            data: {
+              result: {
+                ...(completedTask.result || {}),
+                rewards,
+              },
+            },
+          })
+        }
+      } catch (rewardsError: any) {
+        console.error(
+          "[Votes API] Failed to distribute rewards:",
+          rewardsError?.message || rewardsError
+        )
+      }
 
       // Calculate and update user points based on vote accuracy
       try {
@@ -235,7 +268,7 @@ export async function POST(
           vote_id: vote.id,
           consensus: {
             reached: true,
-            decision: consensusResult.decision,
+            decision,
             majorityPercentage: consensusResult.majorityPercentage,
             requiredVoters,
             currentVoteCount,
@@ -244,7 +277,8 @@ export async function POST(
           result: {
             sentiment,
             confidence,
-            decision: consensusResult.decision,
+            decision,
+            rewards,
           },
         },
         {

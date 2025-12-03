@@ -10,8 +10,13 @@ export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
 
 // Payment configuration
-const PRICE_SOL = parseFloat(process.env.PAYMENT_AMOUNT_SOL || "0.01") // 0.01 SOL payment required
+const PRICE_SOL = parseFloat(process.env.PAYMENT_AMOUNT_SOL || "0.1") // Default: 0.1 SOL payment required
 const PRICE_LAMPORTS = PRICE_SOL * LAMPORTS_PER_SOL
+
+// Per-task reward configuration (how much SOL is distributed to winners)
+// By default this matches PRICE_SOL so the full payment is used as the reward pool.
+export const TASK_REWARD_SOL = parseFloat(process.env.TASK_REWARD_SOL || "0.1")
+export const TASK_REWARD_LAMPORTS = TASK_REWARD_SOL * LAMPORTS_PER_SOL
 
 // USDC configuration (devnet USDC mint)
 const USDC_MINT_ADDRESS = process.env.USDC_MINT_ADDRESS || "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
@@ -745,6 +750,16 @@ export async function POST(req: Request) {
 
     const paymentSignature = paymentResult.signature
     console.log("[Tasks API] Payment verified successfully:", paymentSignature)
+
+    // Sanity check: ensure incoming payment covers the configured per-task reward (for SOL rewards)
+    if (PAYMENT_TYPE === "SOL") {
+      if (PRICE_LAMPORTS < TASK_REWARD_LAMPORTS) {
+        console.warn(
+          "[Tasks API] Incoming SOL payment is less than TASK_REWARD_LAMPORTS. " +
+            `PRICE_LAMPORTS=${PRICE_LAMPORTS}, TASK_REWARD_LAMPORTS=${TASK_REWARD_LAMPORTS}`
+        )
+      }
+    }
 
     // 🚀 Process the task and save to database (only after payment verification)
     console.log("[Tasks API] Saving task to database...")
