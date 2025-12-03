@@ -53,23 +53,43 @@ export async function calculateAndUpdatePoints(
       const pointsChange = userVote === consensusDecision ? 3 : -1
 
       try {
-        // Use atomic update to prevent race conditions
-        await userModel.update({
+        // Use atomic update to prevent race conditions and get the new points value
+        const updatedUser = await userModel.update({
           where: { id: vote.userId },
           data: {
             points: {
               increment: pointsChange,
             },
           },
+          select: {
+            id: true,
+            email: true,
+            points: true,
+          },
         })
 
         console.log(
-          `[Points Calculator] Updated points for user ${vote.user.email}: ${pointsChange > 0 ? "+" : ""}${pointsChange} points (vote: ${userVote}, consensus: ${consensusDecision})`
+          `[Points Calculator] Updated points for user ${updatedUser.email}: ${
+            pointsChange > 0 ? "+" : ""
+          }${pointsChange} points (vote: ${userVote}, consensus: ${consensusDecision}), new total: ${
+            updatedUser.points
+          }`
         )
+
+        // If the user's total points went negative, delete their account permanently
+        if (updatedUser.points < 0) {
+          await userModel.delete({
+            where: { id: updatedUser.id },
+          })
+          console.log(
+            `[Points Calculator] Deleted user ${updatedUser.email} because points went negative (${updatedUser.points}).`
+          )
+        }
+
         updatedCount++
       } catch (error: any) {
         console.error(
-          `[Points Calculator] Failed to update points for user ${vote.userId}:`,
+          `[Points Calculator] Failed to update/delete user ${vote.userId}:`,
           error?.message || error
         )
         // Continue processing other users even if one fails

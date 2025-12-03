@@ -1,7 +1,8 @@
 "use client"
 
+import Link from "next/link"
 import { motion } from "framer-motion"
-import { Bell, Cpu, LogOut } from "lucide-react"
+import { Bell, Cpu, LogOut, Trophy } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { useSession, signOut } from "next-auth/react"
@@ -49,6 +50,18 @@ export default function Header({
                 <span className="absolute inset-0 animate-ping rounded-full bg-[var(--alert-red)] opacity-75" />
               </motion.span>
             )}
+          </Button>
+
+          <Button
+            asChild
+            variant="outline"
+            size="sm"
+            className="hidden items-center gap-1.5 rounded-full border-border/60 bg-background/60 px-3 text-xs font-mono text-muted-foreground hover:border-[var(--neon-green)]/60 hover:bg-[var(--neon-green)]/10 hover:text-[var(--neon-green)] sm:inline-flex"
+          >
+            <Link href="/leaderboard">
+              <Trophy className="h-3.5 w-3.5" />
+              <span>Leaderboard</span>
+            </Link>
           </Button>
 
           {status === "authenticated" && (
