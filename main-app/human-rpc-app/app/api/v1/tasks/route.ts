@@ -3,6 +3,7 @@ import { Connection, PublicKey, LAMPORTS_PER_SOL, SystemProgram, Transaction } f
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddress } from "@solana/spl-token"
 import { SOLANA_RPC_URL } from "@/lib/solanaConfig"
 import type { PrismaClient } from "@prisma/client"
+import { calculateConsensusParams } from "@/lib/consensus-algorithm"
 
 // Ensure this route always returns JSON, not HTML error pages
 export const dynamic = "force-dynamic"
@@ -761,6 +762,29 @@ export async function POST(req: Request) {
         explorerUrl: `https://explorer.solana.com/tx/${paymentSignature}?cluster=${SOLANA_RPC_URL.includes("devnet") ? "devnet" : "mainnet-beta"}`,
       }
 
+      // Extract AI certainty from context.data.aiConfidence (default to 0.5 if not present)
+      let aiCertainty = 0.5 // Default to 50% (maximum uncertainty)
+      if (context && typeof context === 'object' && 'data' in context) {
+        const contextData = (context as any).data
+        if (contextData && typeof contextData === 'object' && 'aiConfidence' in contextData) {
+          const extractedCertainty = parseFloat(contextData.aiConfidence)
+          if (!isNaN(extractedCertainty) && extractedCertainty >= 0.5 && extractedCertainty <= 1.0) {
+            aiCertainty = extractedCertainty
+          }
+        }
+      }
+
+      // Calculate consensus parameters using Inverse Confidence Sliding Scale algorithm
+      const consensusParams = calculateConsensusParams(aiCertainty)
+      const { requiredVoters, consensusThreshold } = consensusParams
+
+      // Log calculated values to server console
+      console.log("[Tasks API] Consensus Algorithm Results:", {
+        aiCertainty: aiCertainty.toFixed(2),
+        requiredVoters: requiredVoters,
+        consensusThreshold: (consensusThreshold * 100).toFixed(1) + "%",
+      })
+
       // TypeScript workaround: task model exists at runtime but types may not be recognized
       // This is safe as we verified the model exists after Prisma generation
       const task = await (prisma as PrismaClient & { task: any }).task.create({
@@ -774,6 +798,12 @@ export async function POST(req: Request) {
           rewardAmount: rewardAmount ? parseFloat(rewardAmount.toString()) : null,
           category: category || null,
           escrowAmount: escrowAmount || null,
+          aiCertainty: aiCertainty,
+          requiredVoters: requiredVoters,
+          consensusThreshold: consensusThreshold,
+          currentVoteCount: 0,
+          yesVotes: 0,
+          noVotes: 0,
           context: context ? {
             ...context,
             payment: paymentInfo
@@ -781,7 +811,13 @@ export async function POST(req: Request) {
           result: {
             message: "Task created and awaiting human review",
             timestamp: new Date().toISOString(),
-            payment: paymentInfo
+            payment: paymentInfo,
+            consensus: {
+              aiCertainty: aiCertainty,
+              requiredVoters: requiredVoters,
+              consensusThreshold: consensusThreshold,
+              calculatedAt: new Date().toISOString(),
+            },
           },
         },
       })

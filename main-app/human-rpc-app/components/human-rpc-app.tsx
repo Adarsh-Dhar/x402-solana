@@ -53,7 +53,9 @@ export default function HumanRPCApp() {
           throw new Error(`Failed to fetch tasks: ${response.statusText}`)
         }
         const data = await response.json()
-        setTasks(data)
+        // Filter to show only pending tasks (status === "open")
+        const pendingTasks = data.filter((task: Task) => task.status === "open")
+        setTasks(pendingTasks)
       } catch (err) {
         console.error("Error fetching tasks:", err)
         setError(err instanceof Error ? err.message : "Failed to load tasks")

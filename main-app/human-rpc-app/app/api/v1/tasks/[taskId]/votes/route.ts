@@ -15,7 +15,7 @@ async function getPrisma(): Promise<PrismaClient> {
     }
     return prisma as PrismaClient
   } catch (error: any) {
-    console.error("[Task API] Failed to import prisma:", error)
+    console.error("[Votes API] Failed to import prisma:", error)
     throw new Error(`Database connection error: ${error?.message || "Failed to initialize database client"}`)
   }
 }
@@ -30,9 +30,9 @@ function getModels(prisma: PrismaClient) {
 }
 
 /**
- * GET handler - Retrieve task by ID for polling
+ * POST handler - Submit a vote for a task
  */
-export async function GET(
+export async function POST(
   req: Request,
   { params }: { params: Promise<{ taskId: string }> | { taskId: string } }
 ) {
@@ -40,94 +40,7 @@ export async function GET(
     // Handle both sync and async params (Next.js 15+ uses async params)
     const resolvedParams = params instanceof Promise ? await params : params
     const { taskId } = resolvedParams
-    console.log("[Task API] GET handler called for task:", taskId)
-
-    if (!taskId) {
-      return NextResponse.json(
-        { error: "Task ID is required" },
-        { status: 400 }
-      )
-    }
-
-    const prisma = await getPrisma()
-    const taskModel = getTaskModel(prisma)
-
-    // Find task by ID
-    const task = await taskModel.findUnique({
-      where: { id: taskId },
-    })
-
-    if (!task) {
-      return NextResponse.json(
-        { error: "Task not found" },
-        { status: 404 }
-      )
-    }
-
-    // Return task with status, result, and consensus information
-    const yesVotes = task.yesVotes || 0
-    const noVotes = task.noVotes || 0
-    const currentVoteCount = task.currentVoteCount || 0
-    const requiredVoters = task.requiredVoters || 3
-    const consensusThreshold = task.consensusThreshold ? parseFloat(task.consensusThreshold.toString()) : 0.51
-    const aiCertainty = task.aiCertainty ? parseFloat(task.aiCertainty.toString()) : null
-
-    return NextResponse.json(
-      {
-        id: task.id,
-        status: task.status,
-        result: task.result,
-        text: task.text,
-        agentName: task.agentName,
-        createdAt: task.createdAt,
-        updatedAt: task.updatedAt,
-        consensus: {
-          aiCertainty,
-          requiredVoters,
-          consensusThreshold,
-          currentVoteCount,
-          yesVotes,
-          noVotes,
-        },
-      },
-      {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json; charset=utf-8",
-        },
-      }
-    )
-  } catch (error: any) {
-    console.error("[Task API] GET error:", error)
-    return NextResponse.json(
-      {
-        error: `Failed to fetch task: ${error?.message || "Unknown error"}`,
-      },
-      {
-        status: 500,
-        headers: {
-          "Content-Type": "application/json; charset=utf-8",
-        },
-      }
-    )
-  }
-}
-
-/**
- * PATCH handler - Submit decision for a task
- * 
- * NOTE: For backward compatibility, this endpoint routes votes to the new votes endpoint.
- * The new consensus system requires multiple votes before completion.
- */
-export async function PATCH(
-  req: Request,
-  { params }: { params: Promise<{ taskId: string }> | { taskId: string } }
-) {
-  try {
-    // Handle both sync and async params (Next.js 15+ uses async params)
-    const resolvedParams = params instanceof Promise ? await params : params
-    const { taskId } = resolvedParams
-    console.log("[Task API] PATCH handler called for task:", taskId)
+    console.log("[Votes API] POST handler called for task:", taskId)
 
     if (!taskId) {
       return NextResponse.json(
@@ -141,7 +54,7 @@ export async function PATCH(
     try {
       body = await req.json()
     } catch (parseError: any) {
-      console.error("[Task API] Failed to parse request body:", parseError)
+      console.error("[Votes API] Failed to parse request body:", parseError)
       return NextResponse.json(
         { error: "Invalid request body. Expected JSON." },
         {
@@ -167,9 +80,6 @@ export async function PATCH(
       )
     }
 
-    // Use consensus-based voting system
-    console.log("[Task API] Processing vote through consensus system...")
-    
     const prisma = await getPrisma()
     const { task: taskModel, vote: voteModel } = getModels(prisma)
 
@@ -193,7 +103,7 @@ export async function PATCH(
           result: existingTask.result,
         },
         {
-          status: 409,
+          status: 409, // Conflict
           headers: {
             "Content-Type": "application/json; charset=utf-8",
           },
@@ -220,7 +130,7 @@ export async function PATCH(
             },
           },
           {
-            status: 409,
+            status: 409, // Conflict
             headers: {
               "Content-Type": "application/json; charset=utf-8",
             },
@@ -238,7 +148,7 @@ export async function PATCH(
       },
     })
 
-    console.log("[Task API] Vote created:", vote.id)
+    console.log("[Votes API] Vote created:", vote.id)
 
     // Update task vote counts
     const isYes = decision === "yes"
@@ -268,7 +178,7 @@ export async function PATCH(
       consensusThreshold
     )
 
-    console.log("[Task API] Consensus check:", {
+    console.log("[Votes API] Consensus check:", {
       taskId,
       currentVotes: currentVoteCount,
       requiredVoters,
@@ -282,7 +192,7 @@ export async function PATCH(
     // If consensus reached, update task status to completed
     if (consensusResult.reached && consensusResult.decision) {
       const sentiment = consensusResult.decision === "yes" ? "POSITIVE" : "NEGATIVE"
-      const confidence = 1.0
+      const confidence = 1.0 // Consensus decisions have full confidence
 
       const completedTask = await taskModel.update({
         where: { id: taskId },
@@ -307,7 +217,7 @@ export async function PATCH(
         },
       })
 
-      console.log("[Task API] Task completed with consensus:", completedTask.id)
+      console.log("[Votes API] Task completed with consensus:", completedTask.id)
 
       return NextResponse.json(
         {
@@ -361,10 +271,108 @@ export async function PATCH(
       }
     )
   } catch (error: any) {
-    console.error("[Task API] PATCH error:", error)
+    console.error("[Votes API] POST error:", error)
     return NextResponse.json(
       {
-        error: `Failed to submit decision: ${error?.message || "Unknown error"}`,
+        error: `Failed to submit vote: ${error?.message || "Unknown error"}`,
+      },
+      {
+        status: 500,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+        },
+      }
+    )
+  }
+}
+
+/**
+ * GET handler - Get votes for a task
+ */
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ taskId: string }> | { taskId: string } }
+) {
+  try {
+    // Handle both sync and async params (Next.js 15+ uses async params)
+    const resolvedParams = params instanceof Promise ? await params : params
+    const { taskId } = resolvedParams
+    console.log("[Votes API] GET handler called for task:", taskId)
+
+    if (!taskId) {
+      return NextResponse.json(
+        { error: "Task ID is required" },
+        { status: 400 }
+      )
+    }
+
+    const prisma = await getPrisma()
+    const { task: taskModel, vote: voteModel } = getModels(prisma)
+
+    // Get task with vote counts
+    const task = await taskModel.findUnique({
+      where: { id: taskId },
+    })
+
+    if (!task) {
+      return NextResponse.json(
+        { error: "Task not found" },
+        { status: 404 }
+      )
+    }
+
+    // Get all votes for this task
+    const votes = await voteModel.findMany({
+      where: { taskId: taskId },
+      orderBy: { createdAt: "desc" },
+    })
+
+    const yesVotes = task.yesVotes || 0
+    const noVotes = task.noVotes || 0
+    const currentVoteCount = task.currentVoteCount || 0
+    const requiredVoters = task.requiredVoters || 3
+    const consensusThreshold = task.consensusThreshold ? parseFloat(task.consensusThreshold.toString()) : 0.51
+
+    // Check consensus status
+    const consensusResult = checkConsensus(
+      yesVotes,
+      noVotes,
+      requiredVoters,
+      consensusThreshold
+    )
+
+    return NextResponse.json(
+      {
+        task_id: taskId,
+        votes: votes.map((v: any) => ({
+          id: v.id,
+          decision: v.decision,
+          createdAt: v.createdAt,
+          userId: v.userId,
+        })),
+        consensus: {
+          reached: consensusResult.reached,
+          decision: consensusResult.decision,
+          currentVoteCount,
+          requiredVoters,
+          yesVotes,
+          noVotes,
+          consensusThreshold,
+          majorityPercentage: consensusResult.majorityPercentage,
+        },
+      },
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+        },
+      }
+    )
+  } catch (error: any) {
+    console.error("[Votes API] GET error:", error)
+    return NextResponse.json(
+      {
+        error: `Failed to fetch votes: ${error?.message || "Unknown error"}`,
       },
       {
         status: 500,
