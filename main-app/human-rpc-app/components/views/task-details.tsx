@@ -15,12 +15,41 @@ interface TaskDetailsProps {
 export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
   const [decision, setDecision] = useState<"yes" | "no" | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const handleDecision = async (choice: "yes" | "no") => {
     setDecision(choice)
     setIsSubmitting(true)
-    await new Promise((resolve) => setTimeout(resolve, 1500))
-    setIsSubmitting(false)
+    setError(null)
+
+    try {
+      // Extract full task ID (use taskId if available, otherwise try to extract from id)
+      const taskId = task.taskId || task.id.replace(/^#/, "")
+      
+      const response = await fetch(`/api/v1/tasks/${taskId}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ decision: choice }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: "Unknown error" }))
+        throw new Error(errorData.error || `Failed to submit decision: ${response.status}`)
+      }
+
+      const result = await response.json()
+      console.log("Decision submitted successfully:", result)
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to submit decision"
+      setError(errorMessage)
+      console.error("Error submitting decision:", err)
+      // Reset decision state on error so user can try again
+      setDecision(null)
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -153,7 +182,17 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
               <p className="mt-2 text-xs text-muted-foreground">Secured via x402 protocol on Solana</p>
             </div>
 
-            {decision && !isSubmitting ? (
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mb-4 rounded-lg border border-[var(--alert-red)]/30 bg-[var(--alert-red)]/10 p-4 text-center"
+              >
+                <p className="text-sm text-[var(--alert-red)]">{error}</p>
+              </motion.div>
+            )}
+
+            {decision && !isSubmitting && !error ? (
               <motion.div
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}

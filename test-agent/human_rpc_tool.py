@@ -369,6 +369,93 @@ def send_solana_payment(payment_address: str, amount_lamports: int) -> Transacti
     return transaction
 
 
+def poll_task_status(task_id: str, max_wait_seconds: int = 300, poll_interval: int = 3) -> dict:
+    """
+    Poll task status until completion or timeout.
+    
+    Args:
+        task_id: The task ID to poll
+        max_wait_seconds: Maximum time to wait in seconds (default: 5 minutes)
+        poll_interval: Time between polls in seconds (default: 3 seconds)
+        
+    Returns:
+        Dictionary with task result containing sentiment and confidence
+        
+    Raises:
+        ValueError: If polling times out or fails
+    """
+    human_rpc_url = os.getenv("HUMAN_RPC_URL", "http://localhost:3000/api/v1/tasks")
+    task_url = f"{human_rpc_url}/{task_id}"
+    
+    print(f"🔄 Waiting for human decision...")
+    
+    start_time = time.time()
+    last_status_print = 0
+    
+    while True:
+        elapsed = time.time() - start_time
+        
+        if elapsed >= max_wait_seconds:
+            raise ValueError(
+                f"Polling timeout after {max_wait_seconds}s. Task {task_id} did not complete."
+            )
+        
+        try:
+            response = requests.get(task_url, timeout=10)
+            
+            if response.status_code == 404:
+                raise ValueError(f"Task {task_id} not found")
+            
+            if response.status_code != 200:
+                raise ValueError(
+                    f"Failed to poll task status. Status: {response.status_code}, "
+                    f"Response: {response.text[:200]}"
+                )
+            
+            task_data = response.json()
+            status = task_data.get("status", "unknown")
+            
+            if status == "completed":
+                result = task_data.get("result", {})
+                if not result:
+                    raise ValueError(f"Task completed but no result found")
+                
+                # Extract sentiment and confidence from result
+                sentiment = result.get("sentiment", "UNKNOWN")
+                confidence = result.get("confidence", 0.0)
+                decision = result.get("decision", "unknown")
+                
+                print(f"✅ Human decision received!")
+                print(f"   Decision: {decision}")
+                print(f"   Sentiment: {sentiment}")
+                print(f"   Confidence: {confidence}")
+                
+                # Return result in the same format as the original response
+                return {
+                    "status": "Task Completed",
+                    "task_id": task_id,
+                    "sentiment": sentiment,
+                    "confidence": confidence,
+                    "decision": decision,
+                    "result": result,
+                }
+            
+            # Task not completed yet, show waiting message every 10 seconds
+            if elapsed - last_status_print >= 10:
+                print(f"   Still waiting... ({int(elapsed)}s elapsed)")
+                last_status_print = elapsed
+            
+            # Wait before next poll
+            time.sleep(poll_interval)
+            
+        except requests.exceptions.RequestException as e:
+            print(f"⚠️  Poll request failed: {e}")
+            # Continue polling on network errors (up to timeout)
+            time.sleep(poll_interval)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Failed to parse task status response: {e}")
+
+
 def build_x402_payment_header(transaction: Transaction, network: str = "devnet") -> str:
     """
     Build x402-compliant X-PAYMENT header from a signed transaction.
@@ -557,7 +644,7 @@ def ask_human_rpc(
                 print(f"📊 Response Text (first 500 chars): {retry_response.text[:500]}")
                 
                 if retry_response.status_code == 200:
-                    print("✅ Human RPC analysis complete!")
+                    print("✅ Task created successfully!")
                     # Handle empty responses gracefully
                     if not retry_response.text or len(retry_response.text.strip()) == 0:
                         raise ValueError(
@@ -565,7 +652,17 @@ def ask_human_rpc(
                             f"Headers: {dict(retry_response.headers)}"
                         )
                     try:
-                        return retry_response.json()
+                        task_response = retry_response.json()
+                        task_id = task_response.get("task_id")
+                        
+                        if not task_id:
+                            raise ValueError("Task created but no task_id in response")
+                        
+                        print(f"📋 Task ID: {task_id}")
+                        print("⏳ Waiting for human decision...")
+                        
+                        # Poll for task completion
+                        return poll_task_status(task_id)
                     except json.JSONDecodeError as e:
                         raise ValueError(
                             f"Failed to parse JSON response. Status: {retry_response.status_code}, "
@@ -582,7 +679,7 @@ def ask_human_rpc(
         
         # Handle other status codes
         elif response.status_code in [200, 202]:
-            print("✅ Human RPC analysis complete!")
+            print("✅ Task created successfully!")
             # Debug: Log response details
             print(f"📊 Response Status: {response.status_code}")
             print(f"📊 Response Text (first 500 chars): {response.text[:500]}")
@@ -594,7 +691,17 @@ def ask_human_rpc(
                     f"Headers: {dict(response.headers)}"
                 )
             try:
-                return response.json()
+                task_response = response.json()
+                task_id = task_response.get("task_id")
+                
+                if not task_id:
+                    raise ValueError("Task created but no task_id in response")
+                
+                print(f"📋 Task ID: {task_id}")
+                print("⏳ Waiting for human decision...")
+                
+                # Poll for task completion
+                return poll_task_status(task_id)
             except json.JSONDecodeError as e:
                 raise ValueError(
                     f"Failed to parse JSON response. Status: {response.status_code}, "

@@ -942,6 +942,7 @@ export async function GET() {
 
         return {
           id: displayId,
+          taskId: taskId, // Include full database ID for API calls
           agentName: task.agentName || "Unknown Agent",
           reward: task.reward || "0 USDC",
           rewardAmount,
@@ -963,6 +964,7 @@ export async function GET() {
         // Return a minimal valid task structure even if transformation fails
         return {
           id: `#${String(task.id || "").slice(-4)}`,
+          taskId: String(task.id || ""), // Include full database ID
           agentName: "Unknown Agent",
           reward: "0 USDC",
           rewardAmount: 0,

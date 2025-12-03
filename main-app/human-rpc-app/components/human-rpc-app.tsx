@@ -14,6 +14,7 @@ export type ViewType = "dashboard" | "task-details" | "profile" | "login" | "reg
 
 export interface Task {
   id: string
+  taskId?: string // Full database ID for API calls
   agentName: string
   reward: string
   rewardAmount: number
