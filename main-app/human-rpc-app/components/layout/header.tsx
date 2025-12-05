@@ -2,10 +2,11 @@
 
 import Link from "next/link"
 import { motion, AnimatePresence } from "framer-motion"
-import { Bell, Cpu, LogOut, Trophy } from "lucide-react"
+import { Bell, Cpu, LogOut, Trophy, Medal, Award } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { useSession, signOut } from "next-auth/react"
+import { useState, useEffect } from "react"
 
 interface HeaderProps {
   onProfileClick: () => void
@@ -21,6 +22,67 @@ export default function Header({
   onNotificationClick,
 }: HeaderProps) {
   const { data: session, status } = useSession()
+  const [userRank, setUserRank] = useState<number | null>(null)
+  const [totalUsers, setTotalUsers] = useState<number>(0)
+
+  useEffect(() => {
+    const fetchUserRank = async () => {
+      if (!session?.user?.email) {
+        setUserRank(null)
+        return
+      }
+
+      try {
+        const response = await fetch("/api/leaderboard")
+        if (response.ok) {
+          const data = await response.json()
+          setTotalUsers(data.totalUsers || 0)
+          
+          // Find current user's rank
+          const userEntry = data.leaderboard?.find(
+            (entry: { email: string; rank: number }) => entry.email === session.user.email
+          )
+          if (userEntry) {
+            setUserRank(userEntry.rank)
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching user rank:", error)
+      }
+    }
+
+    fetchUserRank()
+    // Refresh rank every 30 seconds
+    const interval = setInterval(fetchUserRank, 30000)
+    return () => clearInterval(interval)
+  }, [session])
+
+  const calculatePercentile = (rank: number, total: number) => {
+    if (total === 0) return 100
+    return (rank / total) * 100
+  }
+
+  const getRankIcon = (percentile: number) => {
+    if (percentile <= 1) {
+      return <Trophy className="h-4 w-4 text-yellow-500" />
+    } else if (percentile <= 5) {
+      return <Medal className="h-4 w-4 text-gray-400" />
+    } else if (percentile <= 10) {
+      return <Award className="h-4 w-4 text-amber-600" />
+    }
+    return null
+  }
+
+  const getRankBadgeColor = (percentile: number) => {
+    if (percentile <= 1) {
+      return "bg-yellow-500/20 text-yellow-500 border-yellow-500/50"
+    } else if (percentile <= 5) {
+      return "bg-gray-400/20 text-gray-400 border-gray-400/50"
+    } else if (percentile <= 10) {
+      return "bg-amber-600/20 text-amber-600 border-amber-600/50"
+    }
+    return "bg-card/50 text-muted-foreground border-border"
+  }
 
   return (
     <motion.header
@@ -69,9 +131,25 @@ export default function Header({
           {status === "authenticated" && (
             <>
               {session?.user?.email && (
-                <span className="hidden text-xs font-mono text-muted-foreground sm:inline">
-                  {session.user.email}
-                </span>
+                <div className="hidden items-center gap-2 sm:flex">
+                  {userRank !== null && totalUsers > 0 && (() => {
+                    const percentile = calculatePercentile(userRank, totalUsers)
+                    const icon = getRankIcon(percentile)
+                    return (
+                      <div
+                        className={`flex h-7 w-7 items-center justify-center rounded-lg border ${getRankBadgeColor(percentile)}`}
+                        title={`Rank #${userRank} (Top ${percentile.toFixed(1)}%)`}
+                      >
+                        {icon || (
+                          <span className="text-xs font-bold">{userRank}</span>
+                        )}
+                      </div>
+                    )
+                  })()}
+                  <span className="text-xs font-mono text-muted-foreground">
+                    {session.user.email}
+                  </span>
+                </div>
               )}
               <Button
                 variant="outline"

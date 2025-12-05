@@ -47,23 +47,28 @@ export default function LeaderboardPage() {
     return () => clearInterval(interval)
   }, [])
 
-  const getRankIcon = (rank: number) => {
-    if (rank === 1) {
+  const calculatePercentile = (rank: number, totalUsers: number) => {
+    if (totalUsers === 0) return 100
+    return (rank / totalUsers) * 100
+  }
+
+  const getRankIcon = (percentile: number) => {
+    if (percentile <= 1) {
       return <Trophy className="h-6 w-6 text-yellow-500" />
-    } else if (rank === 2) {
+    } else if (percentile <= 5) {
       return <Medal className="h-6 w-6 text-gray-400" />
-    } else if (rank === 3) {
+    } else if (percentile <= 10) {
       return <Award className="h-6 w-6 text-amber-600" />
     }
     return null
   }
 
-  const getRankBadgeColor = (rank: number) => {
-    if (rank === 1) {
+  const getRankBadgeColor = (percentile: number) => {
+    if (percentile <= 1) {
       return "bg-yellow-500/20 text-yellow-500 border-yellow-500/50"
-    } else if (rank === 2) {
+    } else if (percentile <= 5) {
       return "bg-gray-400/20 text-gray-400 border-gray-400/50"
-    } else if (rank === 3) {
+    } else if (percentile <= 10) {
       return "bg-amber-600/20 text-amber-600 border-amber-600/50"
     }
     return "bg-card/50 text-muted-foreground border-border"
@@ -135,7 +140,10 @@ export default function LeaderboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {leaderboard.map((entry, index) => (
+                  {leaderboard.map((entry, index) => {
+                    const percentile = calculatePercentile(entry.rank, leaderboard.length)
+                    const icon = getRankIcon(percentile)
+                    return (
                     <motion.tr
                       key={entry.email}
                       initial={{ opacity: 0, x: -20 }}
@@ -146,15 +154,13 @@ export default function LeaderboardPage() {
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
                           <div
-                            className={`flex h-10 w-10 items-center justify-center rounded-lg border ${getRankBadgeColor(entry.rank)}`}
+                            className={`flex h-10 w-10 items-center justify-center rounded-lg border ${getRankBadgeColor(percentile)}`}
                           >
-                            {getRankIcon(entry.rank) || (
+                            {icon || (
                               <span className="text-sm font-bold">{entry.rank}</span>
                             )}
                           </div>
-                          {!getRankIcon(entry.rank) && (
-                            <span className="text-sm font-medium text-muted-foreground">#{entry.rank}</span>
-                          )}
+                          <span className="text-sm font-semibold text-foreground">#{entry.rank}</span>
                         </div>
                       </td>
                       <td className="px-6 py-4">
@@ -164,7 +170,8 @@ export default function LeaderboardPage() {
                         <span className="text-lg font-bold text-[var(--neon-green)]">{entry.points}</span>
                       </td>
                     </motion.tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
