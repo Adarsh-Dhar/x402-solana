@@ -3,10 +3,9 @@
 import { useState, useEffect } from "react"
 import { useSession, signOut } from "next-auth/react"
 import { motion } from "framer-motion"
-import { ArrowLeft, Shield, Clock, DollarSign, Check, X, AlertTriangle, Users, Target } from "lucide-react"
+import { ArrowLeft, Shield, Clock, DollarSign, Check, X, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { Progress } from "@/components/ui/progress"
 import type { Task } from "../human-rpc-app"
 
 interface RewardsMetadata {
@@ -123,18 +122,6 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
       setIsSubmitting(false)
     }
   }
-
-  // Calculate consensus progress
-  const voteProgress = consensusInfo
-    ? (consensusInfo.currentVoteCount / consensusInfo.requiredVoters) * 100
-    : 0
-
-  const majorityPercentage =
-    consensusInfo && consensusInfo.currentVoteCount > 0
-      ? (Math.max(consensusInfo.yesVotes, consensusInfo.noVotes) / consensusInfo.currentVoteCount) * 100
-      : 0
-
-  const thresholdPercentage = consensusInfo ? consensusInfo.consensusThreshold * 100 : 51
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
@@ -292,57 +279,6 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
         >
           <div className="sticky top-24 rounded-xl border border-border bg-card/50 p-6 backdrop-blur-sm">
             <h2 className="mb-4 text-center font-semibold text-foreground">Submit Your Decision</h2>
-
-            {/* Consensus Progress */}
-            {consensusInfo && task.status !== "completed" && (
-              <div className="mb-6 space-y-4 rounded-lg border border-[var(--solana-purple)]/30 bg-[var(--solana-purple)]/5 p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Users className="h-4 w-4 text-[var(--solana-purple)]" />
-                    <span className="text-sm font-semibold text-foreground">Consensus Progress</span>
-                  </div>
-                  <span className="font-mono text-sm text-[var(--solana-purple)]">
-                    {consensusInfo.currentVoteCount}/{consensusInfo.requiredVoters}
-                  </span>
-                </div>
-                <Progress value={voteProgress} className="h-2" />
-                
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <div className="rounded border border-[var(--neon-green)]/30 bg-[var(--neon-green)]/10 p-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">YES</span>
-                      <span className="font-mono font-bold text-[var(--neon-green)]">
-                        {consensusInfo.yesVotes}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="rounded border border-[var(--alert-red)]/30 bg-[var(--alert-red)]/10 p-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">NO</span>
-                      <span className="font-mono font-bold text-[var(--alert-red)]">
-                        {consensusInfo.noVotes}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between text-xs">
-                  <div className="flex items-center gap-2">
-                    <Target className="h-3 w-3 text-muted-foreground" />
-                    <span className="text-muted-foreground">Threshold</span>
-                  </div>
-                  <span className="font-mono font-semibold text-foreground">
-                    {thresholdPercentage.toFixed(1)}%
-                  </span>
-                </div>
-
-                {consensusInfo.aiCertainty && (
-                  <div className="text-xs text-muted-foreground">
-                    AI Certainty: {(consensusInfo.aiCertainty * 100).toFixed(1)}%
-                  </div>
-                )}
-              </div>
-            )}
 
             <div className="mb-6 rounded-lg border border-[var(--solana-purple)]/30 bg-[var(--solana-purple)]/5 p-4">
               <div className="flex items-center justify-between gap-4">
