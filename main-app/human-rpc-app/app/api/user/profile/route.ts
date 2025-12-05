@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server"
 import type { PrismaClient } from "@prisma/client"
-import { getServerSession } from "next-auth"
-import { authOptions } from "@/lib/auth-config"
+import { auth } from "@/lib/nextauth"
 
 // Ensure this route always returns JSON, not HTML error pages
 export const dynamic = "force-dynamic"
@@ -24,9 +23,10 @@ async function getPrisma(): Promise<PrismaClient> {
 /**
  * GET handler - Get current user's profile with rank, stats, and badges
  */
+
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions)
+    const session = await auth()
 
     if (!session?.user?.email) {
       return NextResponse.json(

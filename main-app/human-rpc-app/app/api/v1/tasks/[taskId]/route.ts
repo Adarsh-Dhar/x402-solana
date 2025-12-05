@@ -136,15 +136,29 @@ export async function PATCH(
   try {
     // Handle both sync and async params (Next.js 15+ uses async params)
     const resolvedParams = params instanceof Promise ? await params : params
-    const { taskId } = resolvedParams
+    let { taskId } = resolvedParams
+    
+    // Decode taskId in case it's URL-encoded
+    if (taskId) {
+      taskId = decodeURIComponent(taskId)
+    }
+    
     console.log("[Task API] PATCH handler called for task:", taskId)
+    console.log("[Task API] Request details:", {
+      taskId,
+      url: req.url,
+      method: req.method,
+    })
 
-    if (!taskId) {
+    if (!taskId || taskId.trim() === "") {
       return NextResponse.json(
         { error: "Task ID is required" },
         { status: 400 }
       )
     }
+    
+    // Trim and validate taskId format
+    taskId = taskId.trim()
 
     // Parse request body
     let body
@@ -164,6 +178,11 @@ export async function PATCH(
     }
 
     const { decision, userId: rawUserId, userEmail } = body
+    console.log("[Task API] Request body:", {
+      decision,
+      rawUserId,
+      userEmail: userEmail ? `${userEmail.substring(0, 3)}***` : null, // Log partial email for privacy
+    })
     let resolvedUserId: string | null = null
 
     if (!decision || (decision !== "yes" && decision !== "no")) {
@@ -186,19 +205,87 @@ export async function PATCH(
     const prismaAny = prisma as any
     const userModel = prismaAny.user
 
-    // Check if task exists
-    const existingTask = await taskModel.findUnique({
-      where: { id: taskId },
-    })
+    // Check if task exists - this is critical for foreign key constraint
+    let existingTask
+    try {
+      existingTask = await taskModel.findUnique({
+        where: { id: taskId },
+      })
+    } catch (taskLookupError: any) {
+      console.error("[Task API] Task lookup failed:", taskLookupError)
+      console.error("[Task API] Task lookup error details:", {
+        name: taskLookupError?.name,
+        message: taskLookupError?.message,
+        code: taskLookupError?.code,
+        taskId,
+      })
+      return NextResponse.json(
+        { error: "Invalid task ID format or task not found" },
+        { status: 404 }
+      )
+    }
 
     if (!existingTask) {
+      console.error("[Task API] Task not found for taskId:", taskId)
       return NextResponse.json(
         { error: "Task not found" },
         { status: 404 }
       )
     }
+    
+    console.log("[Task API] Task found:", {
+      id: existingTask.id,
+      status: existingTask.status,
+      currentPhase: existingTask.currentPhase,
+    })
 
+    // Check if task is already completed
+    if (existingTask.status === "completed") {
+      return NextResponse.json(
+        {
+          error: "Task is already completed",
+          result: existingTask.result,
+        },
+        {
+          status: 409,
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+          },
+        }
+      )
+    }
+
+    // Resolve userId from userEmail (or raw userId if passed explicitly)
+    // This must happen before phase eligibility checks
+    if (rawUserId) {
+      resolvedUserId = rawUserId
+    } else if (userEmail) {
+      try {
+        let user = await userModel.findUnique({
+          where: { email: userEmail },
+        })
+
+        if (!user) {
+          // Auto-create a minimal user record for this email so points can be tracked
+          user = await userModel.create({
+            data: {
+              email: userEmail,
+              password: "placeholder", // NOTE: replace with real password handling when wiring auth
+            },
+          })
+        }
+
+        resolvedUserId = user.id
+        console.log("[Task API] Resolved userId from email:", resolvedUserId)
+      } catch (e) {
+        console.error("[Task API] Failed to resolve user by email:", e)
+        resolvedUserId = null
+      }
+    }
+
+    console.log("[Task API] Final resolvedUserId:", resolvedUserId)
     const currentPhase = existingTask.currentPhase || 1
+    console.log("[Task API] Task phase:", currentPhase)
 
     // Enforce leaderboard-based eligibility for later phases
     if (currentPhase > 1) {
@@ -220,48 +307,6 @@ export async function PATCH(
           },
           { status: 403 }
         )
-      }
-    }
-
-    // Check if task is already completed
-    if (existingTask.status === "completed") {
-      return NextResponse.json(
-        {
-          error: "Task is already completed",
-          result: existingTask.result,
-        },
-        {
-          status: 409,
-          headers: {
-            "Content-Type": "application/json; charset=utf-8",
-          },
-        }
-      )
-    }
-
-    // Resolve userId from userEmail (or raw userId if passed explicitly)
-    if (rawUserId) {
-      resolvedUserId = rawUserId
-    } else if (userEmail) {
-      try {
-        let user = await userModel.findUnique({
-          where: { email: userEmail },
-        })
-
-        if (!user) {
-          // Auto-create a minimal user record for this email so points can be tracked
-          user = await userModel.create({
-            data: {
-              email: userEmail,
-              password: "placeholder", // NOTE: replace with real password handling when wiring auth
-            },
-          })
-        }
-
-        resolvedUserId = user.id
-      } catch (e) {
-        console.error("[Task API] Failed to resolve user by email:", e)
-        resolvedUserId = null
       }
     }
 
@@ -290,7 +335,8 @@ export async function PATCH(
       }
 
       // Check task eligibility based on rank and tier
-      const isEligible = await isUserEligibleForTask(prisma, resolvedUserId, taskId)
+      // Use existingTask.id to ensure we're using the correct ID format
+      const isEligible = await isUserEligibleForTask(prisma, resolvedUserId, existingTask.id)
       if (!isEligible) {
         return NextResponse.json(
           {
@@ -307,10 +353,12 @@ export async function PATCH(
     }
 
     // Check if user already voted (if user identified)
+    // Use existingTask.id to ensure we're using the correct ID format
+    const validTaskId = existingTask.id
     if (resolvedUserId) {
       const existingVote = await voteModel.findFirst({
         where: {
-          taskId: taskId,
+          taskId: validTaskId,
           userId: resolvedUserId,
         },
       })
@@ -334,21 +382,107 @@ export async function PATCH(
       }
     }
 
+    // Validate data before creating vote
+    if (!validTaskId || !decision || (decision !== "yes" && decision !== "no")) {
+      return NextResponse.json(
+        {
+          error: "Invalid vote data. Task ID and decision (yes/no) are required.",
+        },
+        {
+          status: 400,
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+          },
+        }
+      )
+    }
+
     // Create vote record
-    const vote = await voteModel.create({
-      data: {
-        taskId: taskId,
-        userId: resolvedUserId,   // link vote to user so points can be awarded
-        decision: decision,
-      },
-    })
+    let vote
+    try {
+      console.log("[Task API] Creating vote with:", {
+        taskId: validTaskId,
+        userId: resolvedUserId,
+        decision,
+      })
+      
+      vote = await voteModel.create({
+        data: {
+          taskId: validTaskId,  // Use the validated task ID from the database
+          userId: resolvedUserId || null,   // link vote to user so points can be awarded (null is allowed)
+          decision: decision,
+        },
+      })
+      console.log("[Task API] Vote created successfully:", vote.id)
+    } catch (voteError: any) {
+      console.error("[Task API] Vote creation failed:", voteError)
+      console.error("[Task API] Vote creation error details:", {
+        name: voteError?.name,
+        message: voteError?.message,
+        code: voteError?.code,
+        meta: voteError?.meta,
+        taskId: validTaskId,
+        userId: resolvedUserId,
+        decision,
+        prismaError: JSON.stringify(voteError, null, 2),
+      })
+      
+      // Handle specific Prisma errors
+      if (voteError?.code === "P2002") {
+        // Unique constraint violation - user already voted
+        return NextResponse.json(
+          {
+            error: "You have already voted on this task.",
+          },
+          {
+            status: 409,
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+            },
+          }
+        )
+      }
+      
+      if (voteError?.code === "P2003") {
+        // Foreign key constraint violation - task doesn't exist
+        return NextResponse.json(
+          {
+            error: "Task not found or invalid task ID.",
+          },
+          {
+            status: 404,
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+            },
+          }
+        )
+      }
+      
+      // For Prisma validation errors, provide more context
+      if (voteError?.name?.includes("PrismaClientValidationError")) {
+        console.error("[Task API] Prisma validation error - field issues:", voteError.meta)
+        return NextResponse.json(
+          {
+            error: "Invalid vote data. Please ensure the task exists and your decision is valid.",
+            details: process.env.NODE_ENV === "development" ? voteError.message : undefined,
+          },
+          {
+            status: 400,
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+            },
+          }
+        )
+      }
+      
+      // Re-throw to be caught by outer catch block
+      throw voteError
+    }
 
-    console.log("[Task API] Vote created:", vote.id)
-
-    // Update task vote counts
+    // Update task vote counts using the validated task ID
     const isYes = decision === "yes"
     const updatedTask = await taskModel.update({
-      where: { id: taskId },
+      where: { id: validTaskId },
       data: {
         currentVoteCount: {
           increment: 1,
@@ -374,7 +508,7 @@ export async function PATCH(
     )
 
     console.log("[Task API] Consensus check:", {
-      taskId,
+      taskId: validTaskId,
       currentVotes: currentVoteCount,
       requiredVoters,
       yesVotes,
@@ -390,7 +524,7 @@ export async function PATCH(
       const confidence = 1.0
 
       const completedTask = await taskModel.update({
-        where: { id: taskId },
+        where: { id: validTaskId },
         data: {
           status: "completed",
           result: {
@@ -416,7 +550,7 @@ export async function PATCH(
 
       // Calculate and update user points based on vote accuracy
       try {
-        await calculateAndUpdatePoints(prisma, taskId, consensusResult.decision)
+        await calculateAndUpdatePoints(prisma, validTaskId, consensusResult.decision)
       } catch (pointsError: any) {
         // Log error but don't fail the request - points calculation is non-critical
         console.error("[Task API] Failed to calculate points:", pointsError?.message || pointsError)
@@ -426,7 +560,7 @@ export async function PATCH(
       try {
         const votesForTask = await voteModel.findMany({
           where: {
-            taskId,
+            taskId: validTaskId,
             userId: { not: null },
           },
         })
@@ -442,7 +576,7 @@ export async function PATCH(
           return createConsensusNotification(prisma, {
             kind: isWinner ? "CONSENSUS_WIN" : "CONSENSUS_LOSS",
             userId: v.userId,
-            taskId,
+            taskId: validTaskId,
             pointsDelta,
           })
         })
@@ -455,7 +589,7 @@ export async function PATCH(
       return NextResponse.json(
         {
           status: "Vote submitted - Consensus reached",
-          task_id: taskId,
+          task_id: validTaskId,
           vote_id: vote.id,
           consensus: {
             reached: true,
@@ -486,7 +620,7 @@ export async function PATCH(
       // Capture current phase voters before any reset
       const phaseVotes = await voteModel.findMany({
         where: {
-          taskId,
+          taskId: validTaskId,
           userId: { not: null },
         },
       })
@@ -498,11 +632,11 @@ export async function PATCH(
 
         // Reset votes and counts for the new phase
         await voteModel.deleteMany({
-          where: { taskId },
+          where: { taskId: validTaskId },
         })
 
         await taskModel.update({
-          where: { id: taskId },
+          where: { id: validTaskId },
           data: {
             currentPhase: nextPhase,
             currentVoteCount: 0,
@@ -518,7 +652,7 @@ export async function PATCH(
             return createConsensusNotification(prisma, {
               kind: "CONSENSUS_STAGE_CHANGE",
               userId: v.userId,
-              taskId,
+              taskId: validTaskId,
               fromStage: phase,
               toStage: nextPhase,
             })
@@ -535,7 +669,7 @@ export async function PATCH(
         // Final phase failed - mark as no-consensus and notify participants
         try {
           await taskModel.update({
-            where: { id: taskId },
+            where: { id: validTaskId },
             data: {
               status: "completed",
               result: {
@@ -561,7 +695,7 @@ export async function PATCH(
             return createConsensusNotification(prisma, {
               kind: "CONSENSUS_FINAL_NO_CONSENSUS",
               userId: v.userId,
-              taskId,
+              taskId: validTaskId,
             })
           })
 
@@ -578,7 +712,7 @@ export async function PATCH(
     return NextResponse.json(
       {
         status: "Vote submitted",
-        task_id: taskId,
+        task_id: validTaskId,
         vote_id: vote.id,
         consensus: {
           reached: false,
@@ -599,11 +733,37 @@ export async function PATCH(
     )
   } catch (error: any) {
     console.error("[Task API] PATCH error:", error)
+    console.error("[Task API] Error details:", {
+      name: error?.name,
+      message: error?.message,
+      code: error?.code,
+      meta: error?.meta,
+      stack: error?.stack,
+    })
 
-    // Return a safe, user-friendly error message instead of leaking internal details
+    // Check for specific error types
     const isPrismaValidationError =
       typeof error?.name === "string" && error.name.includes("PrismaClientValidationError")
+    
+    const isUniqueConstraintError =
+      error?.code === "P2002" || error?.message?.includes("Unique constraint")
 
+    // If it's a unique constraint error (user already voted), return a more specific message
+    if (isUniqueConstraintError) {
+      return NextResponse.json(
+        {
+          error: "You have already voted on this task.",
+        },
+        {
+          status: 409,
+          headers: {
+            "Content-Type": "application/json; charset=utf-8",
+          },
+        }
+      )
+    }
+
+    // Return a safe, user-friendly error message instead of leaking internal details
     const message = isPrismaValidationError
       ? "We hit a configuration issue while processing this vote. Please try again later while we finalize the consensus upgrade."
       : "Failed to submit decision due to an unexpected server error. Please try again."

@@ -166,6 +166,12 @@ export default function SwipeInterface({ tasks, onTaskComplete, isLoading = fals
   const handleSwipe = async (direction: "left" | "right") => {
     if (!currentTask || isSubmitting || submittedTasks.has(currentTask.id)) return
 
+    if (!userEmail) {
+      console.error("Cannot submit decision: user email not available")
+      triggerHaptic("heavy")
+      return
+    }
+
     const decision = direction === "right" ? "yes" : "no"
     setIsSubmitting(true)
 
@@ -181,7 +187,16 @@ export default function SwipeInterface({ tasks, onTaskComplete, isLoading = fals
       })
 
       if (!response.ok) {
-        throw new Error("Failed to submit decision")
+        // Try to get error message from response
+        let errorMessage = "Failed to submit decision"
+        try {
+          const errorData = await response.json()
+          errorMessage = errorData.error || errorMessage
+        } catch (e) {
+          // If response is not JSON, use status text
+          errorMessage = response.statusText || errorMessage
+        }
+        throw new Error(errorMessage)
       }
 
       const result = await response.json()
@@ -233,8 +248,26 @@ export default function SwipeInterface({ tasks, onTaskComplete, isLoading = fals
       }, 300)
     } catch (error) {
       console.error("Error submitting decision:", error)
-      setIsSubmitting(false)
-      triggerHaptic("heavy") // Error feedback
+      const errorMessage = error instanceof Error ? error.message : "Failed to submit decision"
+      
+      // If user already voted, mark task as submitted and move on
+      if (errorMessage.includes("already voted") || errorMessage.includes("409")) {
+        setSubmittedTasks((prev) => new Set(prev).add(currentTask.id))
+        // Move to next task
+        setTimeout(() => {
+          setSwipeState((prev) => ({
+            ...prev,
+            currentIndex: Math.min(prev.currentIndex + 1, tasks.length - 1),
+            swipeDirection: null,
+          }))
+          x.set(0)
+          setDragX(0)
+          setIsSubmitting(false)
+        }, 300)
+      } else {
+        setIsSubmitting(false)
+        triggerHaptic("heavy") // Error feedback
+      }
     }
   }
 

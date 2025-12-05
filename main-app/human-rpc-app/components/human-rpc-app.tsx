@@ -1,8 +1,9 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useSession } from "next-auth/react"
 import { motion, AnimatePresence } from "framer-motion"
-import SwipeInterface from "./views/swipe-interface"
+import Dashboard from "./views/dashboard"
 import TaskDetails from "./views/task-details"
 import Profile from "./views/profile"
 import Login from "./views/login"
@@ -36,6 +37,7 @@ export interface Task {
 }
 
 export default function HumanRPCApp() {
+  const { data: session } = useSession()
   const [currentView, setCurrentView] = useState<ViewType>("dashboard")
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [hasUrgentNotification, setHasUrgentNotification] = useState(false)
@@ -60,7 +62,12 @@ export default function HumanRPCApp() {
       try {
         setIsLoading(true)
         setError(null)
-        const response = await fetch("/api/v1/tasks")
+        // Include userEmail in query params if available so backend can filter out already-voted tasks
+        const userEmail = session?.user?.email
+        const url = userEmail 
+          ? `/api/v1/tasks?userEmail=${encodeURIComponent(userEmail)}`
+          : "/api/v1/tasks"
+        const response = await fetch(url)
         if (!response.ok) {
           throw new Error(`Failed to fetch tasks: ${response.statusText}`)
         }
@@ -82,7 +89,7 @@ export default function HumanRPCApp() {
     // Optionally refresh tasks periodically (every 30 seconds)
     const interval = setInterval(fetchTasks, 30000)
     return () => clearInterval(interval)
-  }, [])
+  }, [session])
 
   // Fetch notifications for current user
   useEffect(() => {
@@ -126,11 +133,6 @@ export default function HumanRPCApp() {
     setCurrentView("task-details")
   }
 
-  const handleTaskComplete = async (taskId: string, decision: "yes" | "no") => {
-    // Task completion is handled in SwipeInterface
-    // This callback can be used for additional logic if needed
-    console.log(`Task ${taskId} completed with decision: ${decision}`)
-  }
 
   const handleNavigate = (view: ViewType) => {
     setCurrentView(view)
@@ -141,11 +143,10 @@ export default function HumanRPCApp() {
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId)
 
-  const showHeader = currentView !== "login" && currentView !== "register" && currentView !== "dashboard"
-  const isSwipeView = currentView === "dashboard"
+  const showHeader = currentView !== "login" && currentView !== "register"
 
   return (
-    <div className={`${isSwipeView ? "h-screen w-screen overflow-hidden" : "min-h-screen"} bg-background`}>
+    <div className="min-h-screen bg-background">
       <AnimatePresence mode="wait">
         {showHeader && (
           <Header
@@ -167,9 +168,9 @@ export default function HumanRPCApp() {
           className={showHeader ? "pt-20" : ""}
         >
           {currentView === "dashboard" && (
-            <SwipeInterface 
+            <Dashboard 
               tasks={tasks} 
-              onTaskComplete={handleTaskComplete}
+              onTaskSelect={handleTaskSelect}
               isLoading={isLoading}
               error={error}
             />

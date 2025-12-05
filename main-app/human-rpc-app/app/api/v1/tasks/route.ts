@@ -981,6 +981,24 @@ export async function GET(req: Request) {
         const taskIds = tasks.map((t: any) => t.id)
         eligibleTaskIds = await filterEligibleTasks(prisma, resolvedUserId, taskIds)
         console.log(`[Tasks API] Filtered to ${eligibleTaskIds.length} eligible tasks for user ${resolvedUserId}`)
+        
+        // Also filter out tasks the user has already voted on
+        const prismaAny = prisma as any
+        const voteModel = prismaAny.vote
+        const userVotes = await voteModel.findMany({
+          where: {
+            userId: resolvedUserId,
+          },
+          select: {
+            taskId: true,
+          },
+        })
+        const votedTaskIds = new Set(userVotes.map((v: any) => v.taskId))
+        console.log(`[Tasks API] User has voted on ${votedTaskIds.size} tasks`)
+        
+        // Filter out tasks user has already voted on
+        tasks = tasks.filter((task: any) => !votedTaskIds.has(task.id))
+        console.log(`[Tasks API] After filtering voted tasks: ${tasks.length} tasks remaining`)
       }
     }
 

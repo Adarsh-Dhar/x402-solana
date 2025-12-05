@@ -23,7 +23,7 @@ model User {
   stakeAmount         Decimal? @db.Decimal(10, 2)
   stakeTransactionHash String?
   points              Int      @default(0)
-  rank                String?  // "CADET", "OFFICER", "ARBITER"
+  rank                String?  @map("user_rank") // "CADET", "OFFICER", "ARBITER" - mapped to avoid conflict with PostgreSQL rank() function
   rankUpdatedAt       DateTime?
   godModeBadge        Boolean  @default(false)
   godModeBadgeEarnedAt DateTime?
