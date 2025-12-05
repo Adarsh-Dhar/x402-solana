@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
-import Dashboard from "./views/dashboard"
+import SwipeInterface from "./views/swipe-interface"
 import TaskDetails from "./views/task-details"
 import Profile from "./views/profile"
 import Login from "./views/login"
@@ -21,6 +21,7 @@ export interface Task {
   status: "open" | "urgent" | "completed"
   createdAt: string
   category: string
+  taskTier?: "TRAINING" | "LIVE_FIRE" | "DISPUTE" // Task tier for rank restrictions
   escrowAmount: string
   payment: {
     amount: number | string
@@ -125,6 +126,12 @@ export default function HumanRPCApp() {
     setCurrentView("task-details")
   }
 
+  const handleTaskComplete = async (taskId: string, decision: "yes" | "no") => {
+    // Task completion is handled in SwipeInterface
+    // This callback can be used for additional logic if needed
+    console.log(`Task ${taskId} completed with decision: ${decision}`)
+  }
+
   const handleNavigate = (view: ViewType) => {
     setCurrentView(view)
     if (view !== "task-details") {
@@ -134,10 +141,11 @@ export default function HumanRPCApp() {
 
   const selectedTask = tasks.find((t) => t.id === selectedTaskId)
 
-  const showHeader = currentView !== "login" && currentView !== "register"
+  const showHeader = currentView !== "login" && currentView !== "register" && currentView !== "dashboard"
+  const isSwipeView = currentView === "dashboard"
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className={`${isSwipeView ? "h-screen w-screen overflow-hidden" : "min-h-screen"} bg-background`}>
       <AnimatePresence mode="wait">
         {showHeader && (
           <Header
@@ -159,9 +167,9 @@ export default function HumanRPCApp() {
           className={showHeader ? "pt-20" : ""}
         >
           {currentView === "dashboard" && (
-            <Dashboard 
+            <SwipeInterface 
               tasks={tasks} 
-              onTaskSelect={handleTaskSelect}
+              onTaskComplete={handleTaskComplete}
               isLoading={isLoading}
               error={error}
             />

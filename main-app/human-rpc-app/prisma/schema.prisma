@@ -23,8 +23,18 @@ model User {
   stakeAmount         Decimal? @db.Decimal(10, 2)
   stakeTransactionHash String?
   points              Int      @default(0)
+  rank                String?  // "CADET", "OFFICER", "ARBITER"
+  rankUpdatedAt       DateTime?
+  godModeBadge        Boolean  @default(false)
+  godModeBadgeEarnedAt DateTime?
+  totalVotes          Int      @default(0)
+  correctVotes        Int      @default(0)
+  accuracy30DayStart  DateTime?
+  consecutiveCorrectDays Int   @default(0)
+  isBanned            Boolean  @default(false)
   votes               Vote[]
   notifications       Notification[]
+  voteAccuracies      VoteAccuracy[]
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 }
@@ -33,6 +43,7 @@ model Task {
   id                String   @id @default(cuid())
   text              String
   taskType          String
+  taskTier          String?  // "TRAINING", "LIVE_FIRE", "DISPUTE"
   paymentSignature  String?
   status            String   @default("pending")
   result            Json?
@@ -51,6 +62,7 @@ model Task {
   currentPhase      Int      @default(1)
   phaseMeta         Json?
   votes             Vote[]
+  voteAccuracies    VoteAccuracy[]
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 }
@@ -80,4 +92,19 @@ model Notification {
   createdAt DateTime @default(now())
 
   @@index([userId, isRead])
+}
+
+model VoteAccuracy {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskId           String
+  task             Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  voteDecision     String   // "yes" or "no"
+  consensusDecision String  // "yes" or "no"
+  isCorrect        Boolean
+  createdAt        DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([taskId])
 }

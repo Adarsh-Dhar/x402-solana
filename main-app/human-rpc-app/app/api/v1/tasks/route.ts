@@ -922,11 +922,16 @@ function mapStatus(dbStatus: string): "open" | "urgent" | "completed" {
   return "open" // default
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     console.log("[Tasks API] GET handler called")
     const prisma = await getPrisma()
     console.log("[Tasks API] Prisma client obtained")
+
+    // Check for userId in query params (optional - for filtering by eligibility)
+    const url = new URL(req.url)
+    const userId = url.searchParams.get("userId")
+    const userEmail = url.searchParams.get("userEmail")
 
     // Get task model safely
     const taskModel = getTaskModel(prisma)
@@ -952,8 +957,44 @@ export async function GET() {
       throw dbError
     }
 
+    // Filter tasks by user eligibility if userId/userEmail provided
+    let eligibleTaskIds: string[] = []
+    if (userId || userEmail) {
+      const prismaAny = prisma as any
+      const userModel = prismaAny.user
+      
+      let resolvedUserId: string | null = null
+      if (userId) {
+        resolvedUserId = userId
+      } else if (userEmail) {
+        const user = await userModel.findUnique({
+          where: { email: userEmail },
+          select: { id: true },
+        })
+        if (user) {
+          resolvedUserId = user.id
+        }
+      }
+
+      if (resolvedUserId) {
+        const { filterEligibleTasks } = await import("@/lib/task-eligibility")
+        const taskIds = tasks.map((t: any) => t.id)
+        eligibleTaskIds = await filterEligibleTasks(prisma, resolvedUserId, taskIds)
+        console.log(`[Tasks API] Filtered to ${eligibleTaskIds.length} eligible tasks for user ${resolvedUserId}`)
+      }
+    }
+
     // Transform tasks to frontend format
-    const transformedTasks = tasks.map((task: any) => {
+    const transformedTasks = tasks
+      .filter((task: any) => {
+        // If user filtering is enabled, only show eligible tasks
+        if ((userId || userEmail) && eligibleTaskIds.length > 0) {
+          return eligibleTaskIds.includes(task.id)
+        }
+        // Otherwise show all tasks
+        return true
+      })
+      .map((task: any) => {
       try {
         // Use context if available, otherwise construct from result
         let contextData = task.context || null
@@ -1003,6 +1044,7 @@ export async function GET() {
             : "Just now",
           category: task.category || "General",
           escrowAmount: task.escrowAmount || "0 USDC",
+          taskTier: task.taskTier || "TRAINING", // Include task tier in response
           payment: paymentInfo,
           context: contextData || {
             type: task.taskType || "sentiment_analysis",

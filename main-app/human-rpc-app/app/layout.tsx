@@ -9,9 +9,25 @@ const _geist = Geist({ subsets: ["latin"] });
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: 'v0 App',
-  description: 'Created with v0',
+  title: 'Tinder for Truth - Human RPC',
+  description: 'Swipe to verify AI-generated content. Fast, rhythmic, rewarding.',
   generator: 'v0.app',
+  viewport: {
+    width: 'device-width',
+    initialScale: 1,
+    maximumScale: 1,
+    userScalable: false,
+    viewportFit: 'cover',
+  },
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#000000' },
+    { media: '(prefers-color-scheme: dark)', color: '#000000' },
+  ],
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'Tinder for Truth',
+  },
   icons: {
     icon: [
       {
@@ -37,8 +53,8 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
-      <body className={`font-sans antialiased`}>
+    <html lang="en" className="h-full overflow-hidden">
+      <body className="h-full w-full overflow-hidden font-sans antialiased touch-pan-y">
         <SessionProvider>
           <SolanaWalletProvider>
             {children}

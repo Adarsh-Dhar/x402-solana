@@ -1,4 +1,7 @@
 import type { PrismaClient } from "@prisma/client"
+import { updateUserRank } from "./rank-calculator"
+import { applyStakePenalty } from "./stake-penalty"
+import { recordVoteAccuracy } from "./god-mode-tracker"
 
 /**
  * Calculate and update user points based on vote accuracy
@@ -6,6 +9,11 @@ import type { PrismaClient } from "@prisma/client"
  * Points calculation:
  * - +3 points if user's vote matches final consensus
  * - -1 point if user's vote is opposite of consensus
+ * 
+ * Enhanced with:
+ * - Rank-based penalties for wrong answers
+ * - Accuracy tracking for God Mode badge
+ * - Automatic rank updates
  * 
  * @param prisma - Prisma client instance
  * @param taskId - Task ID that reached consensus
@@ -50,21 +58,62 @@ export async function calculateAndUpdatePoints(
       }
 
       const userVote = vote.decision
-      const pointsChange = userVote === consensusDecision ? 3 : -1
+      const isCorrect = userVote === consensusDecision
+      const pointsChange = isCorrect ? 3 : -1
 
       try {
-        // Use atomic update to prevent race conditions and get the new points value
+        // Get user's current rank before updating
+        const userBefore = await userModel.findUnique({
+          where: { id: vote.userId },
+          select: {
+            id: true,
+            rank: true,
+            points: true,
+            totalVotes: true,
+            correctVotes: true,
+          },
+        })
+
+        if (!userBefore) {
+          return // User not found, skip
+        }
+
+        const userRank = userBefore.rank || "CADET"
+        const currentPoints = userBefore.points || 0
+
+        // Calculate new points (but don't apply yet - need to handle Cadet penalty)
+        let newPoints = currentPoints + pointsChange
+
+        // Apply rank-based penalties for wrong answers
+        if (!isCorrect) {
+          if (userRank === "CADET") {
+            // Cadet penalty: Reset points to 0 (XP bar reset)
+            newPoints = 0
+          }
+          // Officer and Arbiter penalties are handled in applyStakePenalty (stake burning/banning)
+        }
+
+        // Update user with points, vote counts, and accuracy tracking
         const updatedUser = await userModel.update({
           where: { id: vote.userId },
           data: {
-            points: {
-              increment: pointsChange,
+            points: newPoints < 0 ? 0 : newPoints, // Never go below 0
+            totalVotes: {
+              increment: 1,
             },
+            correctVotes: isCorrect
+              ? {
+                  increment: 1,
+                }
+              : undefined,
           },
           select: {
             id: true,
             email: true,
             points: true,
+            totalVotes: true,
+            correctVotes: true,
+            rank: true,
           },
         })
 
@@ -76,20 +125,49 @@ export async function calculateAndUpdatePoints(
           }`
         )
 
-        // If the user's total points went negative, delete their account permanently
+        // Record vote accuracy for God Mode tracking
+        try {
+          await recordVoteAccuracy(prisma, vote.userId, taskId, userVote, consensusDecision, isCorrect)
+        } catch (accuracyError: any) {
+          console.error(`[Points Calculator] Failed to record vote accuracy:`, accuracyError)
+          // Non-critical, continue
+        }
+
+        // Apply rank-based penalties for wrong answers (after points update)
+        if (!isCorrect) {
+          try {
+            await applyStakePenalty(prisma, vote.userId, taskId, userRank as any)
+          } catch (penaltyError: any) {
+            console.error(`[Points Calculator] Failed to apply penalty:`, penaltyError)
+            // Non-critical, continue
+          }
+        }
+
+        // Update user rank (may have changed due to points change)
+        try {
+          await updateUserRank(prisma, vote.userId)
+        } catch (rankError: any) {
+          console.error(`[Points Calculator] Failed to update rank:`, rankError)
+          // Non-critical, continue
+        }
+
+        // If the user's total points went negative (shouldn't happen with new logic, but keep as safety)
         if (updatedUser.points < 0) {
-          await userModel.delete({
+          await userModel.update({
             where: { id: updatedUser.id },
+            data: {
+              points: 0,
+            },
           })
           console.log(
-            `[Points Calculator] Deleted user ${updatedUser.email} because points went negative (${updatedUser.points}).`
+            `[Points Calculator] Reset negative points to 0 for user ${updatedUser.email}`
           )
         }
 
         updatedCount++
       } catch (error: any) {
         console.error(
-          `[Points Calculator] Failed to update/delete user ${vote.userId}:`,
+          `[Points Calculator] Failed to update user ${vote.userId}:`,
           error?.message || error
         )
         // Continue processing other users even if one fails

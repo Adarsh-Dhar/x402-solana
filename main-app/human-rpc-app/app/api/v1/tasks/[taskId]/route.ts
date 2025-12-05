@@ -4,6 +4,7 @@ import { checkConsensus } from "@/lib/consensus-checker"
 import { calculateAndUpdatePoints } from "@/lib/points-calculator"
 import { createConsensusNotification } from "@/lib/notifications"
 import { getEligibleUserIdsForPhase } from "@/lib/consensus-eligibility"
+import { isUserEligibleForTask } from "@/lib/task-eligibility"
 
 // Ensure this route always returns JSON, not HTML error pages
 export const dynamic = "force-dynamic"
@@ -261,6 +262,47 @@ export async function PATCH(
       } catch (e) {
         console.error("[Task API] Failed to resolve user by email:", e)
         resolvedUserId = null
+      }
+    }
+
+    // Check if user is banned (if user identified)
+    if (resolvedUserId) {
+      const user = await userModel.findUnique({
+        where: { id: resolvedUserId },
+        select: {
+          id: true,
+          isBanned: true,
+        },
+      })
+
+      if (user?.isBanned) {
+        return NextResponse.json(
+          {
+            error: "Your account has been banned. You cannot vote on tasks.",
+          },
+          {
+            status: 403,
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+            },
+          }
+        )
+      }
+
+      // Check task eligibility based on rank and tier
+      const isEligible = await isUserEligibleForTask(prisma, resolvedUserId, taskId)
+      if (!isEligible) {
+        return NextResponse.json(
+          {
+            error: "You do not have the required rank to access this task tier. Upgrade your rank to unlock more tasks.",
+          },
+          {
+            status: 403,
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+            },
+          }
+        )
       }
     }
 
