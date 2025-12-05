@@ -17,7 +17,16 @@ load_dotenv()
 def analyze_text(text: str) -> dict:
     """
     Analyze text for sentiment using LLM.
-    Returns a dictionary with 'sentiment' and 'confidence' keys.
+    
+    Args:
+        text: The text/query to analyze (user query)
+        
+    Returns:
+        Dictionary with all 4 required fields:
+        - userQuery: The original query/text
+        - agentConclusion: What the agent thinks (e.g., "POSITIVE" or "NEGATIVE")
+        - confidence: Confidence level (0.0-1.0)
+        - reasoning: Why the agent thinks that (explanation of the analysis)
     """
     # Get Google API key
     google_api_key = os.getenv("GOOGLE_API_KEY")
@@ -34,7 +43,11 @@ Analyze the given text and determine if it's POSITIVE or NEGATIVE sentiment.
 Pay special attention to sarcasm, irony, and crypto-twitter slang terms.
 
 Return ONLY valid JSON in this exact format:
-{"sentiment": "POSITIVE" or "NEGATIVE", "confidence": 0.0-1.0}"""
+{
+  "sentiment": "POSITIVE" or "NEGATIVE",
+  "confidence": 0.0-1.0,
+  "reasoning": "A brief explanation of why you reached this conclusion, including any indicators of sarcasm, irony, or slang that influenced your decision"
+}"""
     
     # Build a single prompt string using system prompt + user message
     prompt = f"{system_prompt}\n\nUSER: Analyze this text: {text}"
@@ -63,12 +76,15 @@ Return ONLY valid JSON in this exact format:
             result = json.loads(json_str)
             
             # Validate result structure
-            if 'sentiment' not in result or 'confidence' not in result:
+            if 'sentiment' not in result or 'confidence' not in result or 'reasoning' not in result:
                 raise ValueError(f"Invalid response structure: {result}")
             
+            # Return new structure with all 4 required fields
             return {
-                "sentiment": result['sentiment'],
-                "confidence": float(result['confidence'])
+                "userQuery": text,
+                "agentConclusion": result['sentiment'],
+                "confidence": float(result['confidence']),
+                "reasoning": result['reasoning']
             }
         else:
             raise ValueError(f"Could not parse JSON from response: {response_text}")
@@ -101,7 +117,7 @@ def main():
         print()
         
         # Highlight if it got it wrong (this is sarcastic, should be NEGATIVE)
-        if result["sentiment"] == "POSITIVE":
+        if result["agentConclusion"] == "POSITIVE":
             print("⚠️  WARNING: This text is sarcastic and should be NEGATIVE!")
             print("   The baseline agent failed to detect sarcasm.")
         else:

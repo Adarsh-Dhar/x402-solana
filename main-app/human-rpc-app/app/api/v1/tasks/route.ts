@@ -777,17 +777,98 @@ export async function POST(req: Request) {
         explorerUrl: `https://explorer.solana.com/tx/${paymentSignature}?cluster=${SOLANA_RPC_URL.includes("devnet") ? "devnet" : "mainnet-beta"}`,
       }
 
-      // Extract AI certainty from context.data.aiConfidence (default to 0.5 if not present)
-      let aiCertainty = 0.5 // Default to 50% (maximum uncertainty)
-      if (context && typeof context === 'object' && 'data' in context) {
-        const contextData = (context as any).data
-        if (contextData && typeof contextData === 'object' && 'aiConfidence' in contextData) {
-          const extractedCertainty = parseFloat(contextData.aiConfidence)
-          if (!isNaN(extractedCertainty) && extractedCertainty >= 0.5 && extractedCertainty <= 1.0) {
-            aiCertainty = extractedCertainty
+      // Validate new context structure with required fields
+      if (!context || typeof context !== 'object' || !('data' in context)) {
+        return NextResponse.json(
+          { error: "Context with data field is required" },
+          { 
+            status: 400,
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+            }
           }
-        }
+        )
       }
+
+      const contextData = (context as any).data
+      if (!contextData || typeof contextData !== 'object') {
+        return NextResponse.json(
+          { error: "Context.data must be an object" },
+          { 
+            status: 400,
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+            }
+          }
+        )
+      }
+
+      // Validate required fields: userQuery, agentConclusion, confidence, reasoning
+      const { userQuery, agentConclusion, confidence, reasoning } = contextData
+
+      if (!userQuery || typeof userQuery !== 'string' || userQuery.trim().length === 0) {
+        return NextResponse.json(
+          { error: "userQuery (string) is required in context.data" },
+          { 
+            status: 400,
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+            }
+          }
+        )
+      }
+
+      if (!agentConclusion || typeof agentConclusion !== 'string' || agentConclusion.trim().length === 0) {
+        return NextResponse.json(
+          { error: "agentConclusion (string) is required in context.data" },
+          { 
+            status: 400,
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+            }
+          }
+        )
+      }
+
+      if (confidence === undefined || confidence === null || typeof confidence !== 'number') {
+        return NextResponse.json(
+          { error: "confidence (number 0-1) is required in context.data" },
+          { 
+            status: 400,
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+            }
+          }
+        )
+      }
+
+      const confidenceValue = parseFloat(confidence.toString())
+      if (isNaN(confidenceValue) || confidenceValue < 0 || confidenceValue > 1) {
+        return NextResponse.json(
+          { error: "confidence must be a number between 0 and 1" },
+          { 
+            status: 400,
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+            }
+          }
+        )
+      }
+
+      if (!reasoning || typeof reasoning !== 'string' || reasoning.trim().length === 0) {
+        return NextResponse.json(
+          { error: "reasoning (string) is required in context.data" },
+          { 
+            status: 400,
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+            }
+          }
+        )
+      }
+
+      // Use confidence as aiCertainty for consensus algorithm
+      const aiCertainty = confidenceValue
 
       // Calculate consensus parameters using Inverse Confidence Sliding Scale algorithm
       const consensusParams = calculateConsensusParams(aiCertainty)
@@ -819,10 +900,17 @@ export async function POST(req: Request) {
           currentVoteCount: 0,
           yesVotes: 0,
           noVotes: 0,
-          context: context ? {
-            ...context,
-            payment: paymentInfo
-          } : { payment: paymentInfo },
+          context: {
+            type: context?.type || task_type || "sentiment_analysis",
+            summary: context?.summary || `Agent analysis: ${agentConclusion}`,
+            data: {
+              userQuery,
+              agentConclusion,
+              confidence: confidenceValue,
+              reasoning,
+              payment: paymentInfo
+            }
+          },
           result: {
             message: "Task created and awaiting human review",
             timestamp: new Date().toISOString(),
@@ -1025,9 +1113,15 @@ export async function GET(req: Request) {
           }
         }
 
-        // Extract payment info from context or result
+        // Extract payment info from context.data.payment or result
         let paymentInfo = null
-        if (contextData && typeof contextData === 'object' && 'payment' in contextData) {
+        if (contextData && typeof contextData === 'object' && 'data' in contextData) {
+          const data = (contextData as any).data
+          if (data && typeof data === 'object' && 'payment' in data) {
+            paymentInfo = data.payment
+          }
+        } else if (contextData && typeof contextData === 'object' && 'payment' in contextData) {
+          // Fallback for old structure
           paymentInfo = (contextData as any).payment
         } else if (task.result && typeof task.result === 'object' && 'payment' in task.result) {
           paymentInfo = (task.result as any).payment

@@ -22,10 +22,14 @@ def integrated_analysis(text: str) -> dict:
     Perform integrated analysis: AI first, then Human RPC if confidence is low.
     
     Args:
-        text: The text to analyze
+        text: The text/query to analyze (user query)
         
     Returns:
-        Dictionary with sentiment analysis result
+        Dictionary with analysis result containing:
+        - userQuery: The original query/text
+        - agentConclusion: What the agent thinks (e.g., "POSITIVE" or "NEGATIVE")
+        - confidence: Confidence level (0.0-1.0)
+        - reasoning: Why the agent thinks that
     """
     print("=" * 60)
     print("🤖 Step 1: Initial AI Analysis")
@@ -44,8 +48,10 @@ def integrated_analysis(text: str) -> dict:
         ai_result["confidence"] = ai_confidence_for_consensus
 
         print(f"✅ AI Analysis Result:")
-        print(f"   Sentiment: {ai_result['sentiment']}")
+        print(f"   User Query: {ai_result['userQuery']}")
+        print(f"   Agent Conclusion: {ai_result['agentConclusion']}")
         print(f"   Confidence: {ai_result['confidence']:.3f}")
+        print(f"   Reasoning: {ai_result['reasoning']}")
         print()
         
         # Step 2: Check confidence threshold
@@ -60,24 +66,30 @@ def integrated_analysis(text: str) -> dict:
             
             # Step 3: Call Human RPC tool with full task metadata
             try:
-                # Prepare context with sentiment analysis details
+                # Prepare context with new structure (all 4 required fields)
+                # Use ai_result fields directly since they're already in the correct format
                 context = {
                     "type": "sentiment_check",
-                        "summary": f"Validate sentiment classification. AI confidence: {ai_confidence_for_consensus:.3f}",
+                    "summary": f"Validate sentiment classification. AI confidence: {ai_confidence_for_consensus:.3f}",
                     "data": {
-                        "originalText": text,
-                        "aiSentiment": ai_result["sentiment"],
-                        # Use the calibrated confidence value that drives
-                        # the consensus algorithm to 7 voters & >56% threshold.
-                        "aiConfidence": ai_confidence_for_consensus,
-                        "platform": "Integrated Agent",
-                        "requiresHumanReview": True,
+                        "userQuery": ai_result["userQuery"],  # Use from ai_result to ensure consistency
+                        "agentConclusion": ai_result["agentConclusion"],
+                        "confidence": ai_confidence_for_consensus,  # Use calibrated confidence for consensus
+                        "reasoning": ai_result["reasoning"]
                     }
                 }
                 
+                print("📋 Context prepared for Human RPC:")
+                print(f"   User Query: {context['data']['userQuery']}")
+                print(f"   Agent Conclusion: {context['data']['agentConclusion']}")
+                print(f"   Confidence: {context['data']['confidence']:.3f}")
+                print(f"   Reasoning: {context['data']['reasoning'][:100]}...")
+                print()
+                
                 # Call Human RPC with full metadata
+                # Note: text parameter should match userQuery for consistency
                 human_result = ask_human_rpc.invoke({
-                    "text": text,
+                    "text": context["data"]["userQuery"],  # Use userQuery from context for consistency
                     "agentName": "SentimentAI-Pro",
                     "reward": "0.3 USDC",
                     "rewardAmount": 0.3,
@@ -146,8 +158,8 @@ def main():
         print()
         
         # Highlight if it got it wrong (this is sarcastic, should be NEGATIVE)
-        sentiment = result.get("sentiment", "UNKNOWN")
-        if sentiment == "POSITIVE":
+        conclusion = result.get("agentConclusion", result.get("sentiment", "UNKNOWN"))
+        if conclusion == "POSITIVE":
             print("⚠️  WARNING: This text is sarcastic and should be NEGATIVE!")
             if result.get("confidence", 1.0) >= CONFIDENCE_THRESHOLD:
                 print("   The AI had high confidence but still got it wrong.")

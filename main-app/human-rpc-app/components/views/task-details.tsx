@@ -3,9 +3,10 @@
 import { useState, useEffect } from "react"
 import { useSession, signOut } from "next-auth/react"
 import { motion } from "framer-motion"
-import { ArrowLeft, Shield, Clock, DollarSign, Check, X, AlertTriangle } from "lucide-react"
+import { ArrowLeft, Shield, Clock, DollarSign, Check, X, AlertTriangle, MessageSquare, Brain, Target, Lightbulb } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Progress } from "@/components/ui/progress"
 import type { Task } from "../human-rpc-app"
 
 interface RewardsMetadata {
@@ -161,25 +162,90 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
           transition={{ delay: 0.1 }}
           className="space-y-6 lg:col-span-3"
         >
+          {/* User Query Section */}
           <div className="rounded-xl border border-border bg-card/50 p-6 backdrop-blur-sm">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="font-semibold text-foreground">Agent Request</h2>
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--solana-purple)]/20">
+                <MessageSquare className="h-5 w-5 text-[var(--solana-purple)]" />
+              </div>
+              <div className="flex-1">
+                <h2 className="font-semibold text-foreground">User Query</h2>
+                <p className="text-xs text-muted-foreground">The question or text being analyzed</p>
+              </div>
               <span className="rounded-full bg-[var(--solana-purple)]/20 px-3 py-1 font-mono text-xs text-[var(--solana-purple)]">
                 {task.agentName}
               </span>
             </div>
-            <p className="mb-6 text-muted-foreground">{task.context.summary}</p>
-
             <div className="rounded-lg border border-border bg-background/50 p-4">
-              <div className="mb-2 flex items-center gap-2">
-                <span className="font-mono text-xs text-muted-foreground">
-                  {"// "}
-                  {task.context.type}.json
+              <p className="text-sm leading-relaxed text-foreground whitespace-pre-wrap">
+                {task.context?.data?.userQuery || task.context?.summary || "No query provided"}
+              </p>
+            </div>
+          </div>
+
+          {/* Agent Conclusion Section */}
+          <div className="rounded-xl border border-border bg-card/50 p-6 backdrop-blur-sm">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--neon-green)]/20">
+                <Brain className="h-5 w-5 text-[var(--neon-green)]" />
+              </div>
+              <div className="flex-1">
+                <h2 className="font-semibold text-foreground">Agent Conclusion</h2>
+                <p className="text-xs text-muted-foreground">What the agent thinks</p>
+              </div>
+            </div>
+            <div className="rounded-lg border border-border bg-background/50 p-4">
+              <p className="text-sm leading-relaxed text-foreground whitespace-pre-wrap">
+                {task.context?.data?.agentConclusion || "No conclusion provided"}
+              </p>
+            </div>
+          </div>
+
+          {/* Confidence Section */}
+          <div className="rounded-xl border border-border bg-card/50 p-6 backdrop-blur-sm">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--solana-purple)]/20">
+                <Target className="h-5 w-5 text-[var(--solana-purple)]" />
+              </div>
+              <div className="flex-1">
+                <h2 className="font-semibold text-foreground">Confidence</h2>
+                <p className="text-xs text-muted-foreground">Agent's confidence level</p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">Confidence Level</span>
+                <span className="font-mono text-sm font-semibold text-foreground">
+                  {((task.context?.data?.confidence ?? 0) * 100).toFixed(1)}%
                 </span>
               </div>
-              <pre className="overflow-x-auto font-mono text-sm text-foreground">
-                {JSON.stringify(task.context.data, null, 2)}
-              </pre>
+              <Progress 
+                value={(task.context?.data?.confidence ?? 0) * 100} 
+                className="h-3"
+              />
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>0%</span>
+                <span>50%</span>
+                <span>100%</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Reasoning Section */}
+          <div className="rounded-xl border border-border bg-card/50 p-6 backdrop-blur-sm">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--neon-green)]/20">
+                <Lightbulb className="h-5 w-5 text-[var(--neon-green)]" />
+              </div>
+              <div className="flex-1">
+                <h2 className="font-semibold text-foreground">Reasoning</h2>
+                <p className="text-xs text-muted-foreground">Why the agent thinks that</p>
+              </div>
+            </div>
+            <div className="rounded-lg border border-border bg-background/50 p-4">
+              <p className="text-sm leading-relaxed text-foreground whitespace-pre-wrap">
+                {task.context?.data?.reasoning || "No reasoning provided"}
+              </p>
             </div>
           </div>
 

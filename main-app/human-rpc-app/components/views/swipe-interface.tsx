@@ -3,8 +3,9 @@
 import { useState, useEffect, useRef } from "react"
 import { useSession } from "next-auth/react"
 import { motion, AnimatePresence, useMotionValue, useTransform, useMotionValueEvent } from "framer-motion"
-import { Check, X, Zap, Flame } from "lucide-react"
+import { Check, X, Zap, Flame, MessageSquare, Brain, Target, Lightbulb } from "lucide-react"
 import { RankBadge, GodModeBadge } from "@/components/ui/rank-badge"
+import { Progress } from "@/components/ui/progress"
 import type { Task } from "../human-rpc-app"
 
 interface SwipeInterfaceProps {
@@ -462,23 +463,60 @@ export default function SwipeInterface({ tasks, onTaskComplete, isLoading = fals
                   </div>
                 </div>
 
-                {/* Email Content */}
-                <div className="flex-1 overflow-y-auto">
-                  <div className="mb-4 rounded-xl border border-border bg-background/50 p-4">
-                    <div className="mb-2 font-mono text-xs text-muted-foreground">
-                      AI-Generated Email
+                {/* Agent Analysis Content */}
+                <div className="flex-1 overflow-y-auto space-y-4">
+                  {/* User Query */}
+                  <div className="rounded-lg border border-border bg-background/50 p-3">
+                    <div className="mb-2 flex items-center gap-2">
+                      <MessageSquare className="h-3.5 w-3.5 text-[var(--solana-purple)]" />
+                      <span className="text-xs font-semibold text-foreground">User Query</span>
                     </div>
-                    <div className="space-y-3 text-sm leading-relaxed text-foreground">
-                      {currentTask.context?.summary ? (
-                        <p className="whitespace-pre-wrap">{currentTask.context.summary}</p>
-                      ) : (
-                        <p className="text-muted-foreground">No content available</p>
-                      )}
+                    <p className="text-xs leading-relaxed text-foreground whitespace-pre-wrap line-clamp-2">
+                      {currentTask.context?.data?.userQuery || "No query provided"}
+                    </p>
+                  </div>
+
+                  {/* Agent Conclusion */}
+                  <div className="rounded-lg border border-border bg-background/50 p-3">
+                    <div className="mb-2 flex items-center gap-2">
+                      <Brain className="h-3.5 w-3.5 text-[var(--neon-green)]" />
+                      <span className="text-xs font-semibold text-foreground">Agent Conclusion</span>
                     </div>
+                    <p className="text-xs leading-relaxed text-foreground whitespace-pre-wrap line-clamp-2">
+                      {currentTask.context?.data?.agentConclusion || "No conclusion provided"}
+                    </p>
+                  </div>
+
+                  {/* Confidence */}
+                  <div className="rounded-lg border border-border bg-background/50 p-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Target className="h-3.5 w-3.5 text-[var(--solana-purple)]" />
+                        <span className="text-xs font-semibold text-foreground">Confidence</span>
+                      </div>
+                      <span className="font-mono text-xs font-semibold text-foreground">
+                        {((currentTask.context?.data?.confidence || 0) * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                    <Progress 
+                      value={(currentTask.context?.data?.confidence || 0) * 100} 
+                      className="h-2"
+                    />
+                  </div>
+
+                  {/* Reasoning */}
+                  <div className="rounded-lg border border-border bg-background/50 p-3">
+                    <div className="mb-2 flex items-center gap-2">
+                      <Lightbulb className="h-3.5 w-3.5 text-[var(--neon-green)]" />
+                      <span className="text-xs font-semibold text-foreground">Reasoning</span>
+                    </div>
+                    <p className="text-xs leading-relaxed text-foreground whitespace-pre-wrap line-clamp-3">
+                      {currentTask.context?.data?.reasoning || "No reasoning provided"}
+                    </p>
                   </div>
 
                   {/* Task Metadata */}
-                  <div className="mt-4 space-y-2 text-xs text-muted-foreground">
+                  <div className="mt-2 space-y-1 text-xs text-muted-foreground">
                     <div className="flex items-center justify-between">
                       <span>Category:</span>
                       <span className="font-mono">{currentTask.category}</span>

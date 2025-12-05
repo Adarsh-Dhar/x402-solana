@@ -531,7 +531,8 @@ def ask_human_rpc(
         rewardAmount: Reward amount as float
         category: Category of the task (e.g., "Analysis", "Trading")
         escrowAmount: Escrow amount as string (e.g., "0.6 USDC")
-        context: Context dictionary with type, summary, and data fields
+        context: Context dictionary with type, summary, and data fields.
+                 The data field must contain: userQuery, agentConclusion, confidence, reasoning
         
     Returns:
         Dictionary with sentiment analysis result from Human RPC API
@@ -542,6 +543,48 @@ def ask_human_rpc(
     print(f"📝 Text to analyze: \"{text}\"")
     print(f"🤖 Agent: {agentName}")
     print(f"💰 Reward: {reward}")
+    
+    # Validate context structure if provided
+    if context:
+        if not isinstance(context, dict):
+            raise ValueError("Context must be a dictionary")
+        
+        if "data" not in context:
+            raise ValueError("Context must contain 'data' field")
+        
+        data = context["data"]
+        if not isinstance(data, dict):
+            raise ValueError("Context.data must be a dictionary")
+        
+        # Validate required fields
+        required_fields = ["userQuery", "agentConclusion", "confidence", "reasoning"]
+        missing_fields = [field for field in required_fields if field not in data]
+        
+        if missing_fields:
+            raise ValueError(
+                f"Context.data is missing required fields: {', '.join(missing_fields)}. "
+                f"Required fields: {', '.join(required_fields)}"
+            )
+        
+        # Validate field types
+        if not isinstance(data["userQuery"], str) or not data["userQuery"].strip():
+            raise ValueError("userQuery must be a non-empty string")
+        
+        if not isinstance(data["agentConclusion"], str) or not data["agentConclusion"].strip():
+            raise ValueError("agentConclusion must be a non-empty string")
+        
+        confidence = data["confidence"]
+        if not isinstance(confidence, (int, float)) or confidence < 0 or confidence > 1:
+            raise ValueError("confidence must be a number between 0 and 1")
+        
+        if not isinstance(data["reasoning"], str) or not data["reasoning"].strip():
+            raise ValueError("reasoning must be a non-empty string")
+        
+        print("✅ Context validation passed")
+        print(f"   User Query: {data['userQuery'][:50]}...")
+        print(f"   Agent Conclusion: {data['agentConclusion']}")
+        print(f"   Confidence: {confidence:.3f}")
+        print(f"   Reasoning: {data['reasoning'][:100]}...")
     
     # Prepare the request payload
     payload = {
@@ -554,9 +597,11 @@ def ask_human_rpc(
         "escrowAmount": escrowAmount,
     }
     
-    # Add context if provided
+    # Add context if provided (required for new structure)
     if context:
         payload["context"] = context
+    else:
+        raise ValueError("Context is required. Must include userQuery, agentConclusion, confidence, and reasoning.")
     
     headers = {
         "Content-Type": "application/json"

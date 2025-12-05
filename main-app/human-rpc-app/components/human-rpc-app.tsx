@@ -32,7 +32,20 @@ export interface Task {
   context: {
     type: string
     summary: string
-    data: Record<string, unknown>
+    data: {
+      userQuery: string
+      agentConclusion: string
+      confidence: number
+      reasoning: string
+      payment?: {
+        signature: string
+        amount: number | string
+        amountDisplay: string
+        currency: string
+        explorerUrl: string
+      }
+      [key: string]: unknown // Allow additional fields for backward compatibility
+    }
   }
 }
 
