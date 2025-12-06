@@ -100,12 +100,33 @@ class AutoAgent:
                 kwargs['headers'] = headers
 
                 print(f"[*] {payment_type} payment sent. Retrying...")
-                return self.session.request(method, url, **kwargs)
+                retry_response = self.session.request(method, url, **kwargs)
+                
+                # If retry still returns 402, payment verification likely failed
+                if retry_response.status_code == 402:
+                    raise ValueError(
+                        f"Payment verification failed. The payment transaction was sent but not accepted by the server.\n"
+                        f"Please ensure your agent wallet ({self.wallet.get_public_key()}) has sufficient funds.\n"
+                        f"Required: {payment_desc}\n"
+                        f"Wallet address: {self.wallet.get_public_key()}"
+                    )
+                
+                return retry_response
 
+            except ValueError as e:
+                # Re-raise ValueError (these are our payment errors with clear messages)
+                raise
             except Exception as e:
                 print(f"[*] Payment processing failed: {e}")
-                # Return the original 402 response if payment fails
-                return response
+                # Raise exception with clear message about funding the wallet
+                # This prevents the 402 from being returned and causing confusion
+                raise ValueError(
+                    f"Payment failed: {e}\n"
+                    f"Please fund your agent wallet ({self.wallet.get_public_key()}) with the required amount.\n"
+                    f"For SOL payments: Send SOL to the wallet address.\n"
+                    f"For USDC payments: Send USDC to the wallet address (it will be in an associated token account).\n"
+                    f"Wallet address: {self.wallet.get_public_key()}"
+                ) from e
 
         return response
 
@@ -206,147 +227,6 @@ class AutoAgent:
             except json.JSONDecodeError as e:
                 raise ValueError(f"Failed to parse task status response: {e}")
 
-    def ask_human_rpc(
-        self,
-        text: str,
-        agentName: str = "SentimentAI-Pro",
-        reward: str = "0.3 USDC",
-        rewardAmount: float = 0.3,
-        category: str = "Analysis",
-        escrowAmount: str = "0.6 USDC",
-        context: dict = None
-    ) -> dict:
-        """
-        Ask the Human RPC API to analyze text. Automatically handles 402 payments
-        and polls for task completion.
-        
-        Args:
-            text: The text to analyze for sentiment
-            agentName: Name of the agent creating the task
-            reward: Reward amount as string (e.g., "0.3 USDC")
-            rewardAmount: Reward amount as float
-            category: Category of the task (e.g., "Analysis", "Trading")
-            escrowAmount: Escrow amount as string (e.g., "0.6 USDC")
-            context: Context dictionary with type, summary, and data fields.
-                     The data field must contain: userQuery, agentConclusion, confidence, reasoning
-            
-        Returns:
-            Dictionary with sentiment analysis result from Human RPC API
-        """
-        print(f"🌐 Calling Human RPC API: {self.human_rpc_url}")
-        print(f"📝 Text to analyze: \"{text}\"")
-        print(f"🤖 Agent: {agentName}")
-        print(f"💰 Reward: {reward}")
-        
-        # Validate context structure if provided
-        if context:
-            if not isinstance(context, dict):
-                raise ValueError("Context must be a dictionary")
-            
-            if "data" not in context:
-                raise ValueError("Context must contain 'data' field")
-            
-            data = context["data"]
-            if not isinstance(data, dict):
-                raise ValueError("Context.data must be a dictionary")
-            
-            # Validate required fields
-            required_fields = ["userQuery", "agentConclusion", "confidence", "reasoning"]
-            missing_fields = [field for field in required_fields if field not in data]
-            
-            if missing_fields:
-                raise ValueError(
-                    f"Context.data is missing required fields: {', '.join(missing_fields)}. "
-                    f"Required fields: {', '.join(required_fields)}"
-                )
-            
-            # Validate field types
-            if not isinstance(data["userQuery"], str) or not data["userQuery"].strip():
-                raise ValueError("userQuery must be a non-empty string")
-            
-            if not isinstance(data["agentConclusion"], str) or not data["agentConclusion"].strip():
-                raise ValueError("agentConclusion must be a non-empty string")
-            
-            confidence = data["confidence"]
-            if not isinstance(confidence, (int, float)) or confidence < 0 or confidence > 1:
-                raise ValueError("confidence must be a number between 0 and 1")
-            
-            if not isinstance(data["reasoning"], str) or not data["reasoning"].strip():
-                raise ValueError("reasoning must be a non-empty string")
-            
-            print("✅ Context validation passed")
-            print(f"   User Query: {data['userQuery'][:50]}...")
-            print(f"   Agent Conclusion: {data['agentConclusion']}")
-            print(f"   Confidence: {confidence:.3f}")
-            print(f"   Reasoning: {data['reasoning'][:100]}...")
-        else:
-            raise ValueError("Context is required. Must include userQuery, agentConclusion, confidence, and reasoning.")
-        
-        # Prepare the request payload
-        payload = {
-            "text": text,
-            "task_type": "sentiment_analysis",
-            "agentName": agentName,
-            "reward": reward,
-            "rewardAmount": rewardAmount,
-            "category": category,
-            "escrowAmount": escrowAmount,
-            "context": context
-        }
-        
-        headers = {
-            "Content-Type": "application/json"
-        }
-        
-        try:
-            # Make request using SDK (automatically handles 402 payments)
-            response = self.post(self.human_rpc_url, json=payload, headers=headers, timeout=30)
-            
-            # Debug: Log response details
-            print(f"📊 Response Status: {response.status_code}")
-            print(f"📊 Response Headers: {dict(response.headers)}")
-            print(f"📊 Response Text (first 500 chars): {response.text[:500]}")
-            
-            if response.status_code in [200, 202]:
-                print("✅ Task created successfully!")
-                # Handle empty responses gracefully
-                if not response.text or len(response.text.strip()) == 0:
-                    raise ValueError(
-                        f"Empty response body received. Status: {response.status_code}, "
-                        f"Headers: {dict(response.headers)}"
-                    )
-                try:
-                    task_response = response.json()
-                    task_id = task_response.get("task_id")
-                    
-                    if not task_id:
-                        raise ValueError("Task created but no task_id in response")
-                    
-                    print(f"📋 Task ID: {task_id}")
-                    print("⏳ Waiting for human decision...")
-                    
-                    # Poll for task completion
-                    return self.poll_task_status(task_id)
-                except json.JSONDecodeError as e:
-                    raise ValueError(
-                        f"Failed to parse JSON response. Status: {response.status_code}, "
-                        f"Response text: {response.text[:500]}, Error: {e}"
-                    )
-            else:
-                # Debug: Log error response details
-                print(f"❌ Error Response Status: {response.status_code}")
-                print(f"❌ Error Response Headers: {dict(response.headers)}")
-                print(f"❌ Error Response Text: {response.text[:500]}")
-                raise ValueError(
-                    f"Unexpected status code: {response.status_code}. "
-                    f"Response: {response.text[:500]}"
-                )
-                
-        except requests.exceptions.RequestException as e:
-            raise ValueError(f"HTTP request failed: {e}")
-        except Exception as e:
-            raise ValueError(f"Unexpected error: {e}")
-
     def poll_task_status(self, task_id: str, max_wait_seconds: Optional[int] = None, poll_interval: int = 3) -> dict:
         """
         Poll task status until completion or optional timeout.
@@ -544,6 +424,26 @@ class AutoAgent:
             print(f"📊 Response Status: {response.status_code}")
             print(f"📊 Response Headers: {dict(response.headers)}")
             print(f"📊 Response Text (first 500 chars): {response.text[:500]}")
+            
+            # If we still get 402, payment failed (should have been handled by _request)
+            # This is a fallback in case payment exception wasn't raised properly
+            if response.status_code == 402:
+                try:
+                    payment_info = response.json().get("payment", {})
+                    payment_type = "USDC" if payment_info.get("tokenAccount") else "SOL"
+                    amount = payment_info.get("amountSOL") or (payment_info.get("amount", 0) / 1_000_000_000)
+                    
+                    raise ValueError(
+                        f"Payment failed. Unable to complete payment of {amount} {payment_type}.\n"
+                        f"Please fund your agent wallet ({self.wallet.get_public_key()}) and try again.\n"
+                        f"Wallet address: {self.wallet.get_public_key()}"
+                    )
+                except (json.JSONDecodeError, KeyError, AttributeError):
+                    raise ValueError(
+                        f"Payment failed. Received 402 Payment Required but unable to process payment.\n"
+                        f"Please fund your agent wallet ({self.wallet.get_public_key()}) and try again.\n"
+                        f"Wallet address: {self.wallet.get_public_key()}"
+                    )
             
             if response.status_code in [200, 202]:
                 print("✅ Task created successfully!")

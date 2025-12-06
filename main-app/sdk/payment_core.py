@@ -8,11 +8,20 @@ from solders.message import Message
 from solders.instruction import Instruction, AccountMeta
 from solders.system_program import transfer, TransferParams
 
-# Hardcoded Mainnet Defaults (Enforcing standardization)
-RPC_URL = "https://api.mainnet-beta.solana.com"
+# RPC URLs for different networks
+MAINNET_RPC_URL = "https://api.mainnet-beta.solana.com"
+DEVNET_RPC_URL = "https://api.devnet.solana.com"
+
 USDC_MINT = Pubkey.from_string("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
 TOKEN_PROGRAM_ID = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
 ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+
+
+def get_rpc_url(network: str) -> str:
+    """Get the appropriate RPC URL based on network."""
+    if "devnet" in network.lower():
+        return DEVNET_RPC_URL
+    return MAINNET_RPC_URL
 
 
 def derive_associated_token_address(wallet: Pubkey, mint: Pubkey) -> Pubkey:
@@ -35,10 +44,12 @@ def derive_associated_token_address(wallet: Pubkey, mint: Pubkey) -> Pubkey:
 class PaymentCore:
     def __init__(self, wallet_manager):
         self.wallet = wallet_manager
-        self.rpc_url = RPC_URL
+        # Default to mainnet, but will be updated per transaction based on network
+        self.rpc_url = MAINNET_RPC_URL
 
-    def _get_recent_blockhash(self) -> Hash:
+    def _get_recent_blockhash(self, network: str = "mainnet-beta") -> Hash:
         """Get recent blockhash from RPC."""
+        rpc_url = get_rpc_url(network)
         try:
             blockhash_payload = {
                 "jsonrpc": "2.0",
@@ -46,7 +57,7 @@ class PaymentCore:
                 "method": "getLatestBlockhash",
                 "params": [{"commitment": "confirmed"}]
             }
-            blockhash_response = requests.post(self.rpc_url, json=blockhash_payload, timeout=10)
+            blockhash_response = requests.post(rpc_url, json=blockhash_payload, timeout=10)
             blockhash_data = blockhash_response.json()
             
             if "error" in blockhash_data:
@@ -61,8 +72,9 @@ class PaymentCore:
         except Exception as e:
             raise ValueError(f"Could not get recent blockhash: {e}")
 
-    def _check_token_balance(self, token_account: Pubkey) -> int:
+    def _check_token_balance(self, token_account: Pubkey, network: str = "mainnet-beta") -> int:
         """Check token account balance."""
+        rpc_url = get_rpc_url(network)
         try:
             balance_payload = {
                 "jsonrpc": "2.0",
@@ -70,7 +82,7 @@ class PaymentCore:
                 "method": "getTokenAccountBalance",
                 "params": [str(token_account)]
             }
-            balance_response = requests.post(self.rpc_url, json=balance_payload, timeout=10)
+            balance_response = requests.post(rpc_url, json=balance_payload, timeout=10)
             balance_data = balance_response.json()
             
             if "error" in balance_data:
@@ -84,8 +96,9 @@ class PaymentCore:
             print(f"⚠️  Could not check balance: {e}")
             return 0
 
-    def _check_sol_balance(self, pubkey: Pubkey) -> int:
+    def _check_sol_balance(self, pubkey: Pubkey, network: str = "mainnet-beta") -> int:
         """Check SOL balance in lamports."""
+        rpc_url = get_rpc_url(network)
         try:
             balance_payload = {
                 "jsonrpc": "2.0",
@@ -93,7 +106,7 @@ class PaymentCore:
                 "method": "getBalance",
                 "params": [str(pubkey)]
             }
-            balance_response = requests.post(self.rpc_url, json=balance_payload, timeout=10)
+            balance_response = requests.post(rpc_url, json=balance_payload, timeout=10)
             balance_data = balance_response.json()
             
             if "error" in balance_data:
@@ -171,8 +184,8 @@ class PaymentCore:
         # Derive sender's associated token account
         sender_ata = derive_associated_token_address(payer_pubkey, mint_pubkey)
 
-        # Check balance
-        balance = self._check_token_balance(sender_ata)
+        # Check balance (using correct network)
+        balance = self._check_token_balance(sender_ata, network)
         if balance < amount:
             raise Exception(
                 f"Insufficient Funds. Please send USDC to {payer_pubkey}. "
@@ -217,8 +230,8 @@ class PaymentCore:
         if payer_pubkey == recipient_pubkey:
             raise ValueError(f"Cannot send SOL to self. Address: {payer_pubkey}")
 
-        # Check balance (add buffer for fees)
-        balance = self._check_sol_balance(payer_pubkey)
+        # Check balance (add buffer for fees, using correct network)
+        balance = self._check_sol_balance(payer_pubkey, network)
         if balance < amount_lamports + 5000:  # Add buffer for transaction fees
             raise Exception(
                 f"Insufficient Funds. Please send SOL to {payer_pubkey}. "
@@ -250,8 +263,8 @@ class PaymentCore:
         Returns:
             Dictionary with x402 payment payload structure
         """
-        # Get recent blockhash
-        recent_blockhash = self._get_recent_blockhash()
+        # Get recent blockhash (using correct network)
+        recent_blockhash = self._get_recent_blockhash(network)
 
         # Build message
         message = Message.new_with_blockhash(instructions, payer_pubkey, recent_blockhash)
