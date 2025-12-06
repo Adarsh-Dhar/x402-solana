@@ -2,16 +2,28 @@
 """
 Normal Agent (Baseline) - Uses LLM to analyze text for sarcasm and slang.
 This baseline agent often fails on sarcasm detection.
+Now integrated with x402 SDK for automatic Human RPC when confidence is low.
 """
 
 import json
 import os
+import sys
 from dotenv import load_dotenv
 import google.generativeai as genai
 
+# Add SDK to path for importing
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'main-app'))
+from sdk import AutoAgent
 
 # Load environment variables
 load_dotenv()
+
+# Initialize x402 SDK for automatic payment handling and Human RPC integration
+# The SDK auto-manages wallet creation and handles 402 Payment Required responses
+agent = AutoAgent()
+
+# Confidence threshold for triggering Human RPC
+CONFIDENCE_THRESHOLD = 0.99
 
 
 def analyze_text(text: str) -> dict:
@@ -95,10 +107,14 @@ Return ONLY valid JSON in this exact format:
 
 
 def main():
-    """Main function to run the normal agent."""
+    """Main function to run the normal agent with integrated Human RPC support."""
     print("=" * 60)
     print("Normal Agent (Baseline) - Sarcasm & Slang Detector")
+    print("Integrated with x402 SDK for automatic Human RPC")
     print("=" * 60)
+    print()
+    print("This agent uses AI for initial analysis, then calls Human RPC")
+    print(f"when confidence is below the threshold ({CONFIDENCE_THRESHOLD}).")
     print()
     
     # Hardcoded test input that should trick the AI
@@ -108,18 +124,32 @@ def main():
     print()
     
     try:
-        result = analyze_text(test_text)
+        # Use SDK's integrated_analysis method which handles:
+        # 1. AI analysis first
+        # 2. Confidence check
+        # 3. Automatic Human RPC call if confidence is low
+        # 4. Automatic payment handling (SOL or USDC)
+        result = agent.integrated_analysis(
+            text=test_text,
+            ai_analysis_callback=analyze_text,
+            confidence_threshold=CONFIDENCE_THRESHOLD
+        )
         
-        print("✅ Analysis Complete!")
         print()
-        print("Result (JSON):")
+        print("=" * 60)
+        print("📋 Final Analysis Summary")
+        print("=" * 60)
         print(json.dumps(result, indent=2))
         print()
         
         # Highlight if it got it wrong (this is sarcastic, should be NEGATIVE)
-        if result["agentConclusion"] == "POSITIVE":
+        conclusion = result.get("agentConclusion", result.get("sentiment", "UNKNOWN"))
+        if conclusion == "POSITIVE":
             print("⚠️  WARNING: This text is sarcastic and should be NEGATIVE!")
-            print("   The baseline agent failed to detect sarcasm.")
+            if result.get("confidence", 1.0) >= CONFIDENCE_THRESHOLD:
+                print("   The AI had high confidence but still got it wrong.")
+            else:
+                print("   Human RPC was called due to low confidence.")
         else:
             print("✓ Correctly identified as NEGATIVE (sarcastic).")
             
