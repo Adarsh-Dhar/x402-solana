@@ -6,7 +6,7 @@ import { Activity, TrendingUp, Wallet, Plus } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import RegisterAgentFlow from "./register-agent-flow"
-import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 
 interface AgentMetrics {
   totalHumanCalls: number
@@ -154,6 +154,9 @@ export default function AgentDashboard() {
       {/* Register Agent Modal */}
       <Dialog open={showRegisterModal} onOpenChange={setShowRegisterModal}>
         <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Deploy New Agent</DialogTitle>
+          </DialogHeader>
           <RegisterAgentFlow onComplete={handleAgentRegistered} onCancel={() => setShowRegisterModal(false)} />
         </DialogContent>
       </Dialog>

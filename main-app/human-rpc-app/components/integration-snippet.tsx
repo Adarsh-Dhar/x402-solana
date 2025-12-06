@@ -15,13 +15,14 @@ export default function IntegrationSnippet({ agentId, apiKey }: IntegrationSnipp
   const [copied, setCopied] = useState(false)
   const [showApiKey, setShowApiKey] = useState(false)
 
+  // Always mask API key in code snippet - never show the actual key in code
   const codeSnippet = `# Copy-Paste this into your main.py
 
 from human_rpc import guard
 
 @guard(
     agent_id="${agentId}",  # Auto-filled
-    api_key="${showApiKey ? apiKey : "hrpc_••••••••••••••••••••••••••••••••"}"  # Auto-filled (masked)
+    api_key="hrpc_••••••••••••••••••••••••••••••••"  # Replace with your API key (click eye icon to reveal)
 )
 def my_ai_function(query):
     # Your AI logic here

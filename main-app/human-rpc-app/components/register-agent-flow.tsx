@@ -9,8 +9,9 @@ import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { useWallet } from "@solana/wallet-adapter-react"
+import { WalletMultiButton } from "@solana/wallet-adapter-react-ui"
 import { Connection, Transaction, SystemProgram, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js"
-import { Loader2, CheckCircle2, ArrowRight, ArrowLeft, Upload } from "lucide-react"
+import { Loader2, CheckCircle2, ArrowRight, ArrowLeft, Upload, Wallet } from "lucide-react"
 import IntegrationSnippet from "./integration-snippet"
 import { toast } from "sonner"
 
@@ -88,48 +89,67 @@ export default function RegisterAgentFlow({
     setIsLoading(true)
 
     try {
-      // Create a simple transaction for on-chain registration
+      let transactionSignature: string | null = null
+
+      // Optional: Create a transaction for on-chain registration
+      // For now, we'll skip the transaction and register directly in the database
       // In production, this would interact with the x402 program
-      const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com"
-      const connection = new Connection(rpcUrl, "confirmed")
+      const createOnChainTransaction = false // Set to true when on-chain registration is ready
 
-      // Create a minimal transaction (0.001 SOL for registration fee)
-      const registrationFee = 0.001 * LAMPORTS_PER_SOL
-      const transaction = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: wallet.publicKey,
-          toPubkey: new PublicKey("11111111111111111111111111111111"), // System program (placeholder)
-          lamports: registrationFee,
-        })
-      )
+      if (createOnChainTransaction) {
+        try {
+          const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com"
+          const connection = new Connection(rpcUrl, "confirmed")
 
-      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed")
-      transaction.recentBlockhash = blockhash
-      transaction.feePayer = wallet.publicKey
+          // Get a valid recipient address (treasury or registration wallet)
+          // For now, we'll use the staking wallet if available, otherwise skip transaction
+          const registrationWallet = process.env.NEXT_PUBLIC_STAKING_WALLET || process.env.NEXT_PUBLIC_TREASURY_WALLET
 
-      // Send transaction
-      const signature = await wallet.sendTransaction(transaction, connection, {
-        skipPreflight: false,
-        preflightCommitment: "confirmed",
-      })
+          if (registrationWallet && registrationWallet !== "11111111111111111111111111111111") {
+            const registrationFee = 0.001 * LAMPORTS_PER_SOL
+            const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed")
 
-      // Wait for confirmation
-      await connection.confirmTransaction(
-        {
-          signature,
-          blockhash,
-          lastValidBlockHeight,
-        },
-        "confirmed"
-      )
+            const transaction = new Transaction({
+              feePayer: wallet.publicKey,
+              blockhash,
+              lastValidBlockHeight,
+            }).add(
+              SystemProgram.transfer({
+                fromPubkey: wallet.publicKey,
+                toPubkey: new PublicKey(registrationWallet),
+                lamports: registrationFee,
+              })
+            )
 
-      // Register agent via API
+            // Send transaction
+            transactionSignature = await wallet.sendTransaction(transaction, connection, {
+              skipPreflight: false,
+              preflightCommitment: "confirmed",
+            })
+
+            // Wait for confirmation
+            await connection.confirmTransaction(
+              {
+                signature: transactionSignature,
+                blockhash,
+                lastValidBlockHeight,
+              },
+              "confirmed"
+            )
+          }
+        } catch (txError: any) {
+          console.warn("On-chain transaction failed, continuing with database registration:", txError)
+          // Continue with database registration even if transaction fails
+        }
+      }
+
+      // Register agent via API (with or without transaction signature)
       const response = await fetch("/api/agents/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...agentData,
-          transactionSignature: signature,
+          transactionSignature: transactionSignature,
         }),
       })
 
@@ -140,6 +160,12 @@ export default function RegisterAgentFlow({
 
       const data = await response.json()
       setRegisteredAgent(data)
+      
+      // Store API key in sessionStorage temporarily so it can be accessed in dashboard
+      if (data.apiKey) {
+        sessionStorage.setItem(`agent_api_key_${data.agent.agentId}`, data.apiKey)
+      }
+      
       setStep("success")
       toast.success("Agent deployed successfully!")
     } catch (error: any) {
@@ -304,6 +330,30 @@ export default function RegisterAgentFlow({
               </div>
             </div>
 
+            {/* Optional: Show wallet connection status in configuration step */}
+            {!wallet.connected && (
+              <div className="rounded-lg border border-[var(--solana-purple)]/30 bg-[var(--solana-purple)]/5 p-4">
+                <p className="text-sm text-muted-foreground mb-2">
+                  You'll need to connect your wallet in the next step to deploy. You can connect now if you'd like.
+                </p>
+                <div className="relative z-[60]">
+                  <WalletMultiButton className="w-full justify-center border-[var(--solana-purple)]/50 font-semibold text-[var(--solana-purple)] hover:bg-[var(--solana-purple)]/10 bg-transparent !rounded-lg !border !bg-transparent !text-[var(--solana-purple)] pointer-events-auto">
+                    <Wallet className="mr-2 h-4 w-4" />
+                    Connect Wallet
+                  </WalletMultiButton>
+                </div>
+              </div>
+            )}
+
+            {wallet.connected && wallet.publicKey && (
+              <div className="rounded-lg border border-[var(--neon-green)]/30 bg-[var(--neon-green)]/5 p-3">
+                <p className="text-xs text-muted-foreground mb-1">Wallet Connected</p>
+                <p className="font-mono text-xs text-[var(--neon-green)] break-all">
+                  {wallet.publicKey.toString().slice(0, 8)}...{wallet.publicKey.toString().slice(-8)}
+                </p>
+              </div>
+            )}
+
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setStep("identity")} className="gap-2">
                 <ArrowLeft className="h-4 w-4" />
@@ -349,11 +399,34 @@ export default function RegisterAgentFlow({
               </div>
             </div>
 
-            {!wallet.connected && (
-              <div className="rounded-lg border border-yellow-500/50 bg-yellow-500/10 p-4">
-                <p className="text-sm text-yellow-400">Please connect your Solana wallet to continue</p>
+            <div className="space-y-4">
+              <div>
+                <Label>Wallet Connection</Label>
+                <div className="mt-2 relative z-[60]">
+                  <WalletMultiButton className="w-full justify-center border-[var(--solana-purple)]/50 font-semibold text-[var(--solana-purple)] hover:bg-[var(--solana-purple)]/10 bg-transparent !rounded-lg !border !bg-transparent !text-[var(--solana-purple)] pointer-events-auto">
+                    <Wallet className="mr-2 h-4 w-4" />
+                    {wallet.connected ? "Wallet Connected" : "Connect Wallet"}
+                  </WalletMultiButton>
+                </div>
               </div>
-            )}
+
+              {wallet.connected && wallet.publicKey && (
+                <div className="rounded-lg border border-[var(--neon-green)]/30 bg-[var(--neon-green)]/5 p-4">
+                  <p className="text-sm text-muted-foreground mb-1">Connected Wallet</p>
+                  <p className="font-mono text-sm text-[var(--neon-green)] break-all">
+                    {wallet.publicKey.toString()}
+                  </p>
+                </div>
+              )}
+
+              {!wallet.connected && (
+                <div className="rounded-lg border border-yellow-500/50 bg-yellow-500/10 p-4">
+                  <p className="text-sm text-yellow-400">
+                    Please connect your Solana wallet (Phantom, Solflare, or Backpack) to deploy your agent.
+                  </p>
+                </div>
+              )}
+            </div>
 
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setStep("configuration")} className="gap-2">

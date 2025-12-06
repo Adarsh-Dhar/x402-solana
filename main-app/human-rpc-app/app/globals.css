@@ -140,3 +140,20 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Ensure wallet adapter modal appears above dialogs */
+.wallet-adapter-modal-wrapper {
+  z-index: 100 !important;
+}
+
+.wallet-adapter-modal {
+  z-index: 100 !important;
+}
+
+.wallet-adapter-modal-overlay {
+  z-index: 99 !important;
+}
+
+.wallet-adapter-dropdown {
+  z-index: 100 !important;
+}

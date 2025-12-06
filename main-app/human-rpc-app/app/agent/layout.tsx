@@ -48,7 +48,7 @@ export default function AgentLayout({ children }: { children: React.ReactNode })
   const pathname = usePathname()
 
   return (
-    <SidebarProvider>
+    <SidebarProvider className="h-screen">
       <Sidebar>
         <SidebarHeader className="border-b border-sidebar-border p-4">
           <div className="flex items-center gap-2">
@@ -86,11 +86,11 @@ export default function AgentLayout({ children }: { children: React.ReactNode })
           </SidebarGroup>
         </SidebarContent>
       </Sidebar>
-      <SidebarInset>
+      <SidebarInset className="flex flex-col h-full overflow-hidden">
         <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border px-4">
           <SidebarTrigger className="-ml-1" />
         </header>
-        <main className="flex-1 overflow-auto">{children}</main>
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">{children}</div>
       </SidebarInset>
     </SidebarProvider>
   )

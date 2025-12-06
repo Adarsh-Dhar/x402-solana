@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import LiveActivity from "@/components/live-activity"
 import Billing from "@/components/billing"
 import Playground from "@/components/playground"
+import AgentIntegration from "@/components/agent-integration"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -83,12 +84,17 @@ export default function AgentDetailPage() {
           </div>
         </div>
 
-        <Tabs defaultValue="activity" className="space-y-4">
+        <Tabs defaultValue="integration" className="space-y-4">
           <TabsList>
+            <TabsTrigger value="integration">Integration</TabsTrigger>
             <TabsTrigger value="activity">Live Activity</TabsTrigger>
             <TabsTrigger value="billing">Billing</TabsTrigger>
             <TabsTrigger value="playground">Playground</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="integration">
+            <AgentIntegration agentId={agent.agentId} />
+          </TabsContent>
 
           <TabsContent value="activity">
             <LiveActivity agentId={agentId} />

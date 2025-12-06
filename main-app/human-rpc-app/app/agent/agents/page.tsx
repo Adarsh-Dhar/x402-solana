@@ -5,7 +5,7 @@ import AgentList from "@/components/agent-list"
 import { Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useState } from "react"
-import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import RegisterAgentFlow from "@/components/register-agent-flow"
 
 export default function AgentsPage() {
@@ -29,6 +29,9 @@ export default function AgentsPage() {
 
         <Dialog open={showRegisterModal} onOpenChange={setShowRegisterModal}>
           <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Deploy New Agent</DialogTitle>
+            </DialogHeader>
             <RegisterAgentFlow
               onComplete={() => {
                 setShowRegisterModal(false)
