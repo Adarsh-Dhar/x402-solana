@@ -1,3 +1,4 @@
+import os
 import base64
 import json
 import requests
@@ -8,9 +9,9 @@ from solders.message import Message
 from solders.instruction import Instruction, AccountMeta
 from solders.system_program import transfer, TransferParams
 
-# RPC URLs for different networks
-MAINNET_RPC_URL = "https://api.mainnet-beta.solana.com"
-DEVNET_RPC_URL = "https://api.devnet.solana.com"
+# Default RPC URLs (can be overridden via environment variables)
+DEFAULT_MAINNET_RPC_URL = "https://api.mainnet-beta.solana.com"
+DEFAULT_DEVNET_RPC_URL = "https://api.devnet.solana.com"
 
 USDC_MINT = Pubkey.from_string("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
 TOKEN_PROGRAM_ID = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
@@ -18,10 +19,30 @@ ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH
 
 
 def get_rpc_url(network: str) -> str:
-    """Get the appropriate RPC URL based on network."""
+    """
+    Get the appropriate RPC URL based on network.
+    
+    Checks environment variables in this order:
+    1. SOLANA_RPC_URL (overrides all networks)
+    2. SOLANA_MAINNET_RPC_URL or SOLANA_DEVNET_RPC_URL (network-specific)
+    3. Default public RPC URLs
+    
+    Args:
+        network: Network name (mainnet-beta, devnet, etc.)
+        
+    Returns:
+        RPC URL string
+    """
+    # Check for global override first
+    global_rpc = os.getenv("SOLANA_RPC_URL")
+    if global_rpc:
+        return global_rpc
+    
+    # Check for network-specific override
     if "devnet" in network.lower():
-        return DEVNET_RPC_URL
-    return MAINNET_RPC_URL
+        return os.getenv("SOLANA_DEVNET_RPC_URL", DEFAULT_DEVNET_RPC_URL)
+    
+    return os.getenv("SOLANA_MAINNET_RPC_URL", DEFAULT_MAINNET_RPC_URL)
 
 
 def derive_associated_token_address(wallet: Pubkey, mint: Pubkey) -> Pubkey:
@@ -44,8 +65,7 @@ def derive_associated_token_address(wallet: Pubkey, mint: Pubkey) -> Pubkey:
 class PaymentCore:
     def __init__(self, wallet_manager):
         self.wallet = wallet_manager
-        # Default to mainnet, but will be updated per transaction based on network
-        self.rpc_url = MAINNET_RPC_URL
+        # RPC URL will be determined per transaction based on network
 
     def _get_recent_blockhash(self, network: str = "mainnet-beta") -> Hash:
         """Get recent blockhash from RPC."""

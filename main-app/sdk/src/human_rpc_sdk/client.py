@@ -4,12 +4,26 @@ import json
 import time
 import os
 from typing import Optional
-from .wallet_manager import WalletManager
-from .payment_core import PaymentCore
+from .wallet import WalletManager
+from .payment import PaymentCore
 
 
 class AutoAgent:
+    """
+    Autonomous Payment Agent for x402 protocol.
+    
+    Automatically intercepts 402 Payment Required responses and handles
+    Solana payments (SOL or USDC) to unlock paywalled content.
+    """
+    
     def __init__(self, human_rpc_url: Optional[str] = None):
+        """
+        Initialize the AutoAgent.
+        
+        Args:
+            human_rpc_url: Optional Human RPC endpoint URL.
+                          Defaults to HUMAN_RPC_URL env var or localhost.
+        """
         self.wallet = WalletManager()
         self.pay_engine = PaymentCore(self.wallet)
         self.session = requests.Session()
@@ -129,103 +143,6 @@ class AutoAgent:
                 ) from e
 
         return response
-
-    def poll_task_status(self, task_id: str, max_wait_seconds: Optional[int] = None, poll_interval: int = 3) -> dict:
-        """
-        Poll task status until completion or optional timeout.
-        
-        Args:
-            task_id: The task ID to poll
-            max_wait_seconds: Maximum time to wait in seconds. If None, wait indefinitely.
-            poll_interval: Time between polls in seconds (default: 3 seconds)
-            
-        Returns:
-            Dictionary with task result containing sentiment and confidence
-            
-        Raises:
-            ValueError: If polling times out (when max_wait_seconds is set) or fails
-        """
-        task_url = f"{self.human_rpc_url}/{task_id}"
-        
-        print(f"🔄 Waiting for human decision...")
-        
-        start_time = time.time()
-        last_status_print = 0
-        
-        while True:
-            elapsed = time.time() - start_time
-            
-            # Only enforce timeout if max_wait_seconds is explicitly set
-            if max_wait_seconds is not None and elapsed >= max_wait_seconds:
-                raise ValueError(
-                    f"Polling timeout after {max_wait_seconds}s. Task {task_id} did not complete."
-                )
-            
-            try:
-                response = self.get(task_url, timeout=10)
-
-                # Hard 404 → task truly missing
-                if response.status_code == 404:
-                    raise ValueError(f"Task {task_id} not found")
-
-                # Treat 5xx as transient server issues: log and keep polling
-                if 500 <= response.status_code < 600:
-                    print(
-                        f"⚠️  Polling error (server {response.status_code}). "
-                        f"Response (truncated): {response.text[:120]}"
-                    )
-                    time.sleep(poll_interval)
-                    continue
-
-                # Any other non-200 (e.g. 4xx) is treated as fatal
-                if response.status_code != 200:
-                    raise ValueError(
-                        f"Failed to poll task status. Status: {response.status_code}, "
-                        f"Response: {response.text[:200]}"
-                    )
-                
-                task_data = response.json()
-                status = task_data.get("status", "unknown")
-                
-                if status == "completed":
-                    result = task_data.get("result", {})
-                    if not result:
-                        raise ValueError(f"Task completed but no result found")
-                    
-                    # Extract sentiment and confidence from result
-                    sentiment = result.get("sentiment", "UNKNOWN")
-                    confidence = result.get("confidence", 0.0)
-                    decision = result.get("decision", "unknown")
-                    
-                    print(f"✅ Human decision received!")
-                    print(f"   Decision: {decision}")
-                    print(f"   Sentiment: {sentiment}")
-                    print(f"   Confidence: {confidence}")
-                    
-                    # Return result in the same format as the original response
-                    return {
-                        "status": "Task Completed",
-                        "task_id": task_id,
-                        "sentiment": sentiment,
-                        "confidence": confidence,
-                        "decision": decision,
-                        "result": result,
-                    }
-                
-                # Task not completed yet, show waiting message every 10 seconds
-                if elapsed - last_status_print >= 10:
-                    print(f"   Still waiting... ({int(elapsed)}s elapsed)")
-                    last_status_print = elapsed
-                
-                # Wait before next poll
-                time.sleep(poll_interval)
-                
-            except requests.exceptions.RequestException as e:
-                print(f"⚠️  Poll request failed: {e}")
-                # Continue polling on network errors (up to timeout)
-                time.sleep(poll_interval)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Failed to parse task status response: {e}")
 
     def poll_task_status(self, task_id: str, max_wait_seconds: Optional[int] = None, poll_interval: int = 3) -> dict:
         """
@@ -485,7 +402,6 @@ class AutoAgent:
         except Exception as e:
             raise ValueError(f"Unexpected error: {e}")
 
-
     def integrated_analysis(
         self,
         text: str,
@@ -524,7 +440,7 @@ class AutoAgent:
             Dictionary with analysis result (from AI or Human RPC)
             
         Example:
-            from sdk import AutoAgent
+            from human_rpc_sdk import AutoAgent
             
             agent = AutoAgent()
             
@@ -642,3 +558,4 @@ class AutoAgent:
         except Exception as e:
             print(f"❌ Error during AI analysis: {e}")
             raise
+
