@@ -10,17 +10,33 @@ import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { useWallet } from "@solana/wallet-adapter-react"
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui"
-import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js"
-import { getAssociatedTokenAddress, getAccount } from "@solana/spl-token"
+import { Connection, PublicKey, LAMPORTS_PER_SOL, Transaction, SystemProgram, SYSVAR_RENT_PUBKEY } from "@solana/web3.js"
+import {
+  getAssociatedTokenAddress,
+  getAccount,
+  TOKEN_PROGRAM_ID,
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountInstruction,
+  getAssociatedTokenAddressSync,
+} from "@solana/spl-token"
 import { format } from "date-fns"
 import { toast } from "sonner"
 import { Loader2 } from "lucide-react"
+import { Program, AnchorProvider, BN } from "@coral-xyz/anchor"
+import {
+  getEscrowProgram,
+  getEscrowStatePDA,
+  getEscrowTokenAccountPDA,
+  getAgentBalancePDA,
+  ensureEscrowInitialized,
+  getUSDCMint,
+  ESCROW_PROGRAM_ID,
+  USDC_MINT,
+} from "@/lib/escrow"
 
 interface BillingProps {
   agentId: string
 }
-
-const USDC_MINT = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU") // Devnet USDC
 
 export default function Billing({ agentId }: BillingProps) {
   const wallet = useWallet()
@@ -31,6 +47,8 @@ export default function Billing({ agentId }: BillingProps) {
   const [transactions, setTransactions] = useState<any[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isUpdating, setIsUpdating] = useState(false)
+  const [isToppingUp, setIsToppingUp] = useState(false)
+  const [agentData, setAgentData] = useState<{ agentId: string; walletAddress: string | null } | null>(null)
 
   useEffect(() => {
     fetchBillingData()
@@ -46,6 +64,10 @@ export default function Billing({ agentId }: BillingProps) {
         setAutoRefuelThreshold(data.autoRefuelThreshold || 2)
         setAutoRefuelAmount(data.autoRefuelAmount || 20)
         setTransactions(data.recentTransactions || [])
+        setAgentData({
+          agentId: data.agentId,
+          walletAddress: data.walletAddress,
+        })
       }
     } catch (error) {
       console.error("Failed to fetch billing data:", error)
@@ -85,8 +107,183 @@ export default function Billing({ agentId }: BillingProps) {
       return
     }
 
-    // In production, this would open a wallet modal for USDC transfer
-    toast.info("Top-up functionality - integrate with USDC transfer")
+    if (!agentData || !agentData.walletAddress) {
+      toast.error("Agent wallet address not found")
+      return
+    }
+
+    // Prompt for amount
+    const amountStr = prompt("Enter top-up amount (USDC):")
+    if (!amountStr) {
+      return
+    }
+
+    const amount = parseFloat(amountStr)
+    if (isNaN(amount) || amount <= 0) {
+      toast.error("Invalid amount")
+      return
+    }
+
+    setIsToppingUp(true)
+
+    try {
+      const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com"
+      const connection = new Connection(rpcUrl, "confirmed")
+
+      // Ensure escrow is initialized (will initialize if needed)
+      try {
+        await ensureEscrowInitialized(connection, wallet)
+      } catch (error: any) {
+        // If initialization fails, it might be because someone else initialized it
+        // Try to proceed with deposit anyway
+        console.warn("Escrow initialization check failed, proceeding:", error.message)
+      }
+
+      // Get USDC mint based on network
+      const usdcMint = getUSDCMint(connection)
+
+      // Get escrow program
+      const program = await getEscrowProgram(connection, wallet)
+
+      // Derive PDAs
+      const [escrowState] = getEscrowStatePDA()
+      const [escrowTokenAccount] = getEscrowTokenAccountPDA(escrowState)
+      const [agentBalance] = getAgentBalancePDA(agentData.agentId, escrowState)
+
+      // Get user's token account
+      const userTokenAccount = getAssociatedTokenAddressSync(usdcMint, wallet.publicKey)
+      const agentWallet = new PublicKey(agentData.walletAddress)
+
+      // Check if user's token account exists, create if not
+      let userTokenAccountInfo
+      try {
+        userTokenAccountInfo = await getAccount(connection, userTokenAccount)
+      } catch (error) {
+        // Token account doesn't exist, create it
+        const createATAInstruction = createAssociatedTokenAccountInstruction(
+          wallet.publicKey, // payer
+          userTokenAccount, // ata
+          wallet.publicKey, // owner
+          usdcMint // mint
+        )
+
+        const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed")
+        const createTx = new Transaction({
+          feePayer: wallet.publicKey,
+          blockhash,
+          lastValidBlockHeight,
+        }).add(createATAInstruction)
+
+        const createTxSig = await wallet.sendTransaction(createTx, connection, {
+          skipPreflight: false,
+        })
+
+        await connection.confirmTransaction(
+          {
+            signature: createTxSig,
+            blockhash,
+            lastValidBlockHeight,
+          },
+          "confirmed"
+        )
+
+        toast.info("Created USDC token account")
+        
+        // Fetch the account info after creation
+        userTokenAccountInfo = await getAccount(connection, userTokenAccount)
+      }
+
+      // Convert amount to base units (USDC has 6 decimals)
+      const amountBaseUnits = new BN(Math.floor(amount * 1_000_000))
+
+      // Check if user has sufficient USDC balance
+      if (!userTokenAccountInfo || userTokenAccountInfo.amount < BigInt(amountBaseUnits.toString())) {
+        const currentBalance = userTokenAccountInfo
+          ? Number(userTokenAccountInfo.amount) / 1_000_000
+          : 0
+        const isMainnet = connection.rpcEndpoint.includes("mainnet")
+        const faucetInfo = isMainnet
+          ? "You need to acquire USDC from an exchange or DEX."
+          : "You can get devnet USDC from a faucet or by swapping SOL for USDC on a devnet DEX."
+
+        toast.error(
+          `Insufficient USDC balance. You have $${currentBalance.toFixed(2)} USDC, but need $${amount.toFixed(2)}. ${faucetInfo}`
+        )
+        setIsToppingUp(false)
+        return
+      }
+
+      // Build deposit transaction
+      const depositIx = await program.methods
+        .deposit(agentData.agentId, amountBaseUnits)
+        .accounts({
+          escrowState,
+          escrowTokenAccount,
+          agentBalance,
+          user: wallet.publicKey,
+          userTokenAccount,
+          agentWallet,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+          rent: SYSVAR_RENT_PUBKEY,
+        })
+        .instruction()
+
+      // Get recent blockhash
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash("confirmed")
+
+      // Create transaction
+      const transaction = new Transaction({
+        feePayer: wallet.publicKey,
+        blockhash,
+        lastValidBlockHeight,
+      }).add(depositIx)
+
+      // Send transaction using wallet adapter
+      const signature = await wallet.sendTransaction(transaction, connection, {
+        skipPreflight: false,
+        preflightCommitment: "confirmed",
+      })
+
+      toast.success("Top-up transaction submitted!")
+
+      // Wait for confirmation
+      await connection.confirmTransaction(
+        {
+          signature,
+          blockhash,
+          lastValidBlockHeight,
+        },
+        "confirmed"
+      )
+
+      const tx = signature
+
+      // Submit to backend
+      const response = await fetch(`/api/agents/${agentId}/topup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount,
+          transactionSignature: tx,
+        }),
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        toast.success(`Top-up successful! New balance: $${data.newBalance.toFixed(2)}`)
+        // Refresh billing data
+        await fetchBillingData()
+      } else {
+        const error = await response.json()
+        toast.error(error.error || "Failed to process top-up")
+      }
+    } catch (error: any) {
+      console.error("Top-up error:", error)
+      toast.error(error.message || "Failed to top up agent")
+    } finally {
+      setIsToppingUp(false)
+    }
   }
 
   // Calculate fuel gauge percentage (0-100%)
@@ -132,8 +329,19 @@ export default function Billing({ agentId }: BillingProps) {
             </div>
             <div className="flex justify-end">
               <WalletMultiButton />
-              <Button onClick={handleTopUp} className="ml-2" disabled={!wallet.connected}>
-                Top Up
+              <Button
+                onClick={handleTopUp}
+                className="ml-2"
+                disabled={!wallet.connected || isToppingUp || !agentData?.walletAddress}
+              >
+                {isToppingUp ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  "Top Up"
+                )}
               </Button>
             </div>
           </div>
@@ -234,33 +442,51 @@ export default function Billing({ agentId }: BillingProps) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {transactions.map((tx) => (
-                  <TableRow key={tx.id}>
-                    <TableCell className="font-mono text-xs">
-                      {format(new Date(tx.createdAt), "PPp")}
-                    </TableCell>
-                    <TableCell>
-                      <span className="capitalize">{tx.type}</span>
-                    </TableCell>
-                    <TableCell className="font-mono">
-                      {tx.type === "topup" ? "+" : "-"}${tx.amount.toFixed(2)}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {tx.signature ? (
-                        <a
-                          href={`https://solscan.io/tx/${tx.signature}?cluster=devnet`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[var(--neon-green)] hover:underline"
-                        >
-                          {tx.signature.slice(0, 8)}...
-                        </a>
-                      ) : (
-                        "--"
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {transactions.map((tx) => {
+                  // Handle amount - could be Decimal, number, or string
+                  const amount = typeof tx.amount === 'object' && tx.amount !== null && 'toNumber' in tx.amount
+                    ? tx.amount.toNumber()
+                    : typeof tx.amount === 'string'
+                    ? parseFloat(tx.amount)
+                    : typeof tx.amount === 'number'
+                    ? tx.amount
+                    : 0
+
+                  // Handle date - could be string or Date
+                  const date = tx.createdAt instanceof Date
+                    ? tx.createdAt
+                    : typeof tx.createdAt === 'string'
+                    ? new Date(tx.createdAt)
+                    : new Date()
+
+                  return (
+                    <TableRow key={tx.id}>
+                      <TableCell className="font-mono text-xs">
+                        {format(date, "PPp")}
+                      </TableCell>
+                      <TableCell>
+                        <span className="capitalize">{tx.type}</span>
+                      </TableCell>
+                      <TableCell className="font-mono">
+                        {tx.type === "topup" ? "+" : "-"}${amount.toFixed(2)}
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {tx.signature ? (
+                          <a
+                            href={`https://solscan.io/tx/${tx.signature}?cluster=devnet`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[var(--neon-green)] hover:underline"
+                          >
+                            {tx.signature.slice(0, 8)}...
+                          </a>
+                        ) : (
+                          "--"
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           )}

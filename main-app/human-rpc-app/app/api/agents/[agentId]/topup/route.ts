@@ -2,10 +2,7 @@ import { NextResponse } from "next/server"
 import { auth } from "@/lib/nextauth"
 import { prisma } from "@/lib/prisma"
 import { Connection, PublicKey } from "@solana/web3.js"
-import { getAssociatedTokenAddress, getAccount } from "@solana/spl-token"
-
-// USDC mint address (devnet)
-const USDC_MINT = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU") // Devnet USDC
+import { verifyEscrowDepositTransaction, getUSDCMint } from "@/lib/escrow"
 
 export async function POST(
   request: Request,
@@ -53,43 +50,32 @@ export async function POST(
       return NextResponse.json({ error: "Agent not found" }, { status: 404 })
     }
 
-    // Verify transaction on-chain
+    // Verify escrow deposit transaction on-chain
     const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com"
     const connection = new Connection(rpcUrl, "confirmed")
 
     try {
-      const tx = await connection.getTransaction(transactionSignature, {
-        commitment: "confirmed",
-        maxSupportedTransactionVersion: 0,
-      })
+      // Verify the transaction is an escrow deposit for this agent
+      const isValidEscrowDeposit = await verifyEscrowDepositTransaction(
+        connection,
+        transactionSignature,
+        agent.agentId, // Use the agent's public agentId
+        amount
+      )
 
-      if (!tx) {
-        return NextResponse.json({ error: "Transaction not found" }, { status: 400 })
-      }
-
-      // Verify transaction transferred USDC to agent wallet
-      if (agent.walletAddress) {
-        const agentWallet = new PublicKey(agent.walletAddress)
-        const agentTokenAccount = await getAssociatedTokenAddress(USDC_MINT, agentWallet)
-
-        // Check if transaction includes transfer to agent's token account
-        // This is a simplified check - in production, parse transaction instructions
-        const postTokenBalances = tx.meta?.postTokenBalances || []
-        const agentBalance = postTokenBalances.find(
-          (balance) => balance.accountIndex !== undefined && balance.owner === agentWallet.toBase58()
+      if (!isValidEscrowDeposit) {
+        return NextResponse.json(
+          { error: "Transaction is not a valid escrow deposit for this agent" },
+          { status: 400 }
         )
-
-        if (!agentBalance) {
-          // Still allow top-up but log warning
-          console.warn("Could not verify USDC transfer to agent wallet in transaction")
-        }
       }
     } catch (error) {
       console.error("Transaction verification error:", error)
       return NextResponse.json({ error: "Failed to verify transaction" }, { status: 400 })
     }
 
-    // Update agent balance
+    // Update agent balance (this represents the escrow balance for the agent)
+    // The actual USDC is held in the escrow contract
     const updatedAgent = await prisma.agent.update({
       where: { id: agent.id },
       data: {
