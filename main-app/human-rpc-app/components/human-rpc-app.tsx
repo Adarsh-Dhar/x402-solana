@@ -159,7 +159,7 @@ export default function HumanRPCApp() {
   const showHeader = currentView !== "login" && currentView !== "register"
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background w-full">
       <AnimatePresence mode="wait">
         {showHeader && (
           <Header

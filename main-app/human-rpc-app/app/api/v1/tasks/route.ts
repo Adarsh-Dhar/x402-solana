@@ -1155,7 +1155,7 @@ export async function GET(req: Request) {
             ? formatRelativeTime(new Date(task.createdAt)) 
             : "Just now",
           category: task.category || "General",
-          escrowAmount: task.escrowAmount || "0 USDC",
+          escrowAmount: task.escrowAmount || null,
           taskTier: task.taskTier || "TRAINING", // Include task tier in response
           payment: paymentInfo,
           context: contextData || {
@@ -1176,7 +1176,7 @@ export async function GET(req: Request) {
           status: "open" as const,
           createdAt: "Just now",
           category: "General",
-          escrowAmount: "0 USDC",
+          escrowAmount: null,
           payment: null,
           context: {
             type: "unknown",

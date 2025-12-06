@@ -54,8 +54,8 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className="h-full overflow-hidden">
-      <body className="h-full w-full overflow-hidden font-sans antialiased touch-pan-y">
+    <html lang="en" className="h-full">
+      <body className="h-full w-full font-sans antialiased touch-pan-y overflow-y-auto">
         <SessionProvider>
           <SolanaWalletProvider>
             {children}

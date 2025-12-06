@@ -351,7 +351,7 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
                 <div>
                   <span className="text-sm text-muted-foreground">Agent Escrow</span>
                   <div className="mt-1 font-mono text-lg font-bold text-[var(--solana-purple)]">
-                    {task.escrowAmount}
+                    {task.escrowAmount || "0"}
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
                     Secured via x402 protocol on Solana
