@@ -65,7 +65,8 @@ export default function HumanRPCApp() {
       isRead: boolean
     }[]
   >([])
-  const [tasks, setTasks] = useState<Task[]>([])
+  const [activeTasks, setActiveTasks] = useState<Task[]>([])
+  const [completedTasks, setCompletedTasks] = useState<Task[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -85,13 +86,18 @@ export default function HumanRPCApp() {
           throw new Error(`Failed to fetch tasks: ${response.statusText}`)
         }
         const data = await response.json()
-        // Filter to show only pending tasks (status === "open")
-        const pendingTasks = data.filter((task: Task) => task.status === "open")
-        setTasks(pendingTasks)
+        
+        // Separate active and completed tasks
+        const active = data.filter((task: Task) => task.status === "open" || task.status === "urgent")
+        const completed = data.filter((task: Task) => task.status === "completed")
+        
+        setActiveTasks(active)
+        setCompletedTasks(completed)
       } catch (err) {
         console.error("Error fetching tasks:", err)
         setError(err instanceof Error ? err.message : "Failed to load tasks")
-        setTasks([]) // Set empty array on error
+        setActiveTasks([]) // Set empty arrays on error
+        setCompletedTasks([])
       } finally {
         setIsLoading(false)
       }
@@ -154,7 +160,7 @@ export default function HumanRPCApp() {
     }
   }
 
-  const selectedTask = tasks.find((t) => t.id === selectedTaskId)
+  const selectedTask = [...activeTasks, ...completedTasks].find((t) => t.id === selectedTaskId)
 
   const showHeader = currentView !== "login" && currentView !== "register"
 
@@ -182,7 +188,8 @@ export default function HumanRPCApp() {
         >
           {currentView === "dashboard" && (
             <Dashboard 
-              tasks={tasks} 
+              activeTasks={activeTasks}
+              completedTasks={completedTasks}
               onTaskSelect={handleTaskSelect}
               isLoading={isLoading}
               error={error}

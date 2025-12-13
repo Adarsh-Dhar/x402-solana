@@ -34,37 +34,58 @@ export function checkConsensus(
 ): ConsensusResult {
   const currentVoteCount = yesVotes + noVotes
   
-  // Check if we have enough voters
-  if (currentVoteCount < requiredVoters) {
-    return {
-      reached: false,
-      decision: null,
-      majorityPercentage: 0,
-      requiredVoters,
-      currentVoteCount,
-      consensusThreshold,
-      yesVotes,
-      noVotes,
+  // Calculate minimum votes needed for consensus
+  const minVotesForConsensus = Math.ceil(requiredVoters * consensusThreshold)
+  
+  // Check for early consensus - can we reach consensus before all votes are in?
+  let earlyConsensusReached = false
+  let decision: "yes" | "no" | null = null
+  let majorityPercentage = 0
+  
+  if (currentVoteCount > 0) {
+    // Check if YES votes can reach consensus
+    if (yesVotes >= minVotesForConsensus) {
+      earlyConsensusReached = true
+      decision = "yes"
+      // Calculate percentage based on current votes
+      majorityPercentage = yesVotes / currentVoteCount
+    }
+    // Check if NO votes can reach consensus
+    else if (noVotes >= minVotesForConsensus) {
+      earlyConsensusReached = true
+      decision = "no"
+      // Calculate percentage based on current votes
+      majorityPercentage = noVotes / currentVoteCount
+    }
+    // Check if it's impossible for either side to reach consensus
+    else {
+      const remainingVotes = requiredVoters - currentVoteCount
+      const maxPossibleYes = yesVotes + remainingVotes
+      const maxPossibleNo = noVotes + remainingVotes
+      
+      // If neither side can possibly reach the minimum votes needed, 
+      // we need to wait for all votes and use percentage-based consensus
+      if (maxPossibleYes < minVotesForConsensus && maxPossibleNo < minVotesForConsensus) {
+        // Fall back to percentage-based consensus only after all votes are in
+        if (currentVoteCount >= requiredVoters) {
+          const majorityVotes = Math.max(yesVotes, noVotes)
+          majorityPercentage = majorityVotes / currentVoteCount
+          
+          if (majorityPercentage >= consensusThreshold) {
+            earlyConsensusReached = true
+            decision = yesVotes > noVotes ? "yes" : "no"
+          }
+        }
+      } else {
+        // Calculate current majority percentage for display
+        const majorityVotes = Math.max(yesVotes, noVotes)
+        majorityPercentage = majorityVotes / currentVoteCount
+      }
     }
   }
   
-  // Determine majority and calculate percentage
-  const majorityVotes = Math.max(yesVotes, noVotes)
-  const majorityPercentage = currentVoteCount > 0 
-    ? majorityVotes / currentVoteCount 
-    : 0
-  
-  // Check if majority percentage meets threshold
-  const meetsThreshold = majorityPercentage >= consensusThreshold
-  
-  // Determine winning decision
-  let decision: "yes" | "no" | null = null
-  if (meetsThreshold) {
-    decision = yesVotes > noVotes ? "yes" : "no"
-  }
-  
   return {
-    reached: meetsThreshold,
+    reached: earlyConsensusReached,
     decision,
     majorityPercentage,
     requiredVoters,
@@ -79,14 +100,25 @@ export function checkConsensus(
  * Get consensus status message
  */
 export function getConsensusStatusMessage(result: ConsensusResult): string {
+  const minVotesForConsensus = Math.ceil(result.requiredVoters * result.consensusThreshold)
+  
   if (result.reached) {
     return `Consensus reached: ${result.decision?.toUpperCase()} with ${(result.majorityPercentage * 100).toFixed(1)}% agreement`
   }
   
   if (result.currentVoteCount < result.requiredVoters) {
-    return `Waiting for more votes: ${result.currentVoteCount}/${result.requiredVoters} voters`
+    const yesNeeded = Math.max(0, minVotesForConsensus - result.yesVotes)
+    const noNeeded = Math.max(0, minVotesForConsensus - result.noVotes)
+    
+    if (yesNeeded === 0) {
+      return `YES can win with next ${yesNeeded} votes`
+    } else if (noNeeded === 0) {
+      return `NO can win with next ${noNeeded} votes`
+    } else {
+      return `Waiting for votes: ${result.currentVoteCount}/${result.requiredVoters} (need ${Math.min(yesNeeded, noNeeded)} more for consensus)`
+    }
   }
   
-  return `No consensus yet: ${(result.majorityPercentage * 100).toFixed(1)}% majority (needs ${(result.consensusThreshold * 100).toFixed(1)}%)`
+  return `No consensus: ${(result.majorityPercentage * 100).toFixed(1)}% majority (needs ${(result.consensusThreshold * 100).toFixed(1)}%)`
 }
 
