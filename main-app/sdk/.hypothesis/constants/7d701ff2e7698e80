@@ -1,0 +1,4 @@
+# file: /Users/adarsh/Documents/x402-solana/main-app/sdk/src/human_rpc_sdk/invoices.py
+# hypothesis_version: 6.148.7
+
+[1000000000, 'SOL', 'SPL', 'USDC', 'accepts', 'amount', 'amountSOL', 'cluster', 'currency', 'devnet', 'invoice', 'mainnet', 'mainnet-beta', 'mint', 'network', 'payment', 'recipient', 'recipientWallet', 'reference', 'tokenAccount']

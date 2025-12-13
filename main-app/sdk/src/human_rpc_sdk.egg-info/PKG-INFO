@@ -3,7 +3,7 @@ Name: human-rpc-sdk
 Version: 0.1.0
 Summary: Autonomous Payment Agent SDK for Solana x402 protocol
 Author: x402-solana
-License: MIT
+License-Expression: MIT
 Project-URL: Homepage, https://github.com/yourusername/x402-solana
 Project-URL: Repository, https://github.com/yourusername/x402-solana
 Project-URL: Documentation, https://github.com/yourusername/x402-solana/blob/main/main-app/sdk/README.md
@@ -11,7 +11,6 @@ Project-URL: Issues, https://github.com/yourusername/x402-solana/issues
 Keywords: solana,x402,payment,sdk,rpc,blockchain
 Classifier: Development Status :: 4 - Beta
 Classifier: Intended Audience :: Developers
-Classifier: License :: OSI Approved :: MIT License
 Classifier: Programming Language :: Python :: 3
 Classifier: Programming Language :: Python :: 3.9
 Classifier: Programming Language :: Python :: 3.10
@@ -25,6 +24,11 @@ License-File: LICENSE
 Requires-Dist: requests>=2.31.0
 Requires-Dist: solders>=0.18.0
 Requires-Dist: base58>=2.1.0
+Provides-Extra: test
+Requires-Dist: pytest>=7.0.0; extra == "test"
+Requires-Dist: hypothesis>=6.0.0; extra == "test"
+Requires-Dist: flask>=2.0.0; extra == "test"
+Requires-Dist: pytest-cov>=4.0.0; extra == "test"
 Dynamic: license-file
 
 # Human RPC SDK

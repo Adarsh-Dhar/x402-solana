@@ -1,0 +1,4 @@
+# file: /Users/adarsh/Documents/x402-solana/main-app/sdk/src/human_rpc_sdk/decorator.py
+# hypothesis_version: 6.148.7
+
+[0.3, 0.9, 300, '0.3 USDC', '0.6 USDC', 'Verification', 'agentConclusion', 'ai_verification', 'answer', 'confidence', 'content', 'data', 'human_verdict', 'input', 'message', 'query', 'reasoning', 'summary', 'text', 'type', 'userQuery']

@@ -2,11 +2,17 @@ LICENSE
 README.md
 pyproject.toml
 src/human_rpc_sdk/__init__.py
+src/human_rpc_sdk/agent.py
 src/human_rpc_sdk/client.py
+src/human_rpc_sdk/decorator.py
+src/human_rpc_sdk/exceptions.py
+src/human_rpc_sdk/invoices.py
 src/human_rpc_sdk/payment.py
+src/human_rpc_sdk/solana_utils.py
 src/human_rpc_sdk/wallet.py
 src/human_rpc_sdk.egg-info/PKG-INFO
 src/human_rpc_sdk.egg-info/SOURCES.txt
 src/human_rpc_sdk.egg-info/dependency_links.txt
 src/human_rpc_sdk.egg-info/requires.txt
 src/human_rpc_sdk.egg-info/top_level.txt
+tests/test_configuration.py
