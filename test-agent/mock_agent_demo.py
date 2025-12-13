@@ -1,168 +1,124 @@
 #!/usr/bin/env python3
 """
-Mock Agent Demo - Demonstrates HumanRPC SDK integration without external APIs.
-This version uses mock AI analysis to show the @guard decorator functionality.
+Mock Agent Demo - Tests the @guard decorator with a mock human verification.
+This demonstrates the SDK functionality without requiring a live HumanRPC server.
 """
 
 import json
 import os
 import sys
-import random
 from dotenv import load_dotenv
 
 # Add SDK to path for importing
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'main-app', 'sdk', 'src'))
-from human_rpc_sdk import AutoAgent, guard, HumanVerificationError, SDKConfigurationError, PaymentError
+from human_rpc_sdk import guard, HumanVerificationError
 
 # Load environment variables
 load_dotenv()
 
-# Initialize HumanRPC SDK with custom configuration for this agent
-agent = AutoAgent(
-    network="devnet",  # Use devnet for testing
-    timeout=30,
-    default_agent_name="SarcasmDetector-v1",
-    default_reward="0.4 USDC",
-    default_reward_amount=0.4,
-    default_category="Sarcasm Detection",
-    default_escrow_amount="0.8 USDC"
-)
-
 # Confidence threshold for triggering Human RPC
-CONFIDENCE_THRESHOLD = 0.8  # Lower threshold to trigger human verification more often
-
+CONFIDENCE_THRESHOLD = 0.85
 
 @guard(
     threshold=CONFIDENCE_THRESHOLD,
-    agent_id="SarcasmDetector-v1",
-    reward="0.4 USDC",
-    reward_amount=0.4,
-    category="Sarcasm Detection",
-    escrow_amount="0.8 USDC",
-    timeout=300,
-    fallback_on_error=True
+    agent_id="MockSentimentBot",
+    reward="0.3 USDC",
+    reward_amount=0.3,
+    category="Sentiment Analysis",
+    escrow_amount="0.6 USDC",
+    timeout=30,  # Short timeout for demo
+    fallback_on_error=True  # Return original result if human verification fails
 )
-def analyze_text_mock(text: str) -> dict:
+def analyze_sentiment_mock(text: str) -> dict:
     """
-    Mock AI analysis for sentiment with varying confidence levels.
-    
-    This simulates an AI that sometimes has low confidence, triggering
-    the @guard decorator to request human verification.
+    Mock sentiment analysis that returns low confidence for ambiguous text.
     
     Args:
         text: The text to analyze
         
     Returns:
-        Dictionary with required fields for @guard decorator
+        Dictionary with sentiment analysis results
     """
+    # Simple mock logic that creates uncertainty for neutral/ambiguous text
+    text_lower = text.lower()
     
-    # Mock AI analysis with different confidence levels based on text content
-    if "great job" in text.lower() and "delay" in text.lower():
-        # This is sarcastic - AI should be uncertain
-        sentiment = "POSITIVE"  # AI gets it wrong
-        confidence = 0.6  # Low confidence - will trigger human verification
-        reasoning = "Detected positive words 'great job' but uncertain due to context with 'delay'"
-    elif "amazing" in text.lower():
-        # Clear positive sentiment
-        sentiment = "POSITIVE"
-        confidence = 0.95  # High confidence
-        reasoning = "Strong positive sentiment with word 'amazing'"
-    elif "terrible" in text.lower():
-        # Clear negative sentiment
-        sentiment = "NEGATIVE"
-        confidence = 0.92  # High confidence
-        reasoning = "Strong negative sentiment with word 'terrible'"
+    # Clearly positive phrases
+    if any(word in text_lower for word in ["amazing", "excellent", "fantastic", "love"]):
+        return {
+            "userQuery": text,
+            "agentConclusion": "POSITIVE",
+            "confidence": 0.95,
+            "reasoning": "Contains clearly positive language"
+        }
+    
+    # Clearly negative phrases
+    elif any(word in text_lower for word in ["terrible", "awful", "hate", "worst"]):
+        return {
+            "userQuery": text,
+            "agentConclusion": "NEGATIVE", 
+            "confidence": 0.92,
+            "reasoning": "Contains clearly negative language"
+        }
+    
+    # Ambiguous/neutral phrases - low confidence
     else:
-        # Uncertain cases
-        sentiment = random.choice(["POSITIVE", "NEGATIVE", "NEUTRAL"])
-        confidence = random.uniform(0.5, 0.75)  # Low confidence range
-        reasoning = f"Uncertain analysis, classified as {sentiment} with low confidence"
-    
-    return {
-        "userQuery": text,
-        "agentConclusion": sentiment,
-        "confidence": confidence,
-        "reasoning": reasoning
-    }
+        return {
+            "userQuery": text,
+            "agentConclusion": "NEUTRAL",
+            "confidence": 0.65,  # Below threshold - will trigger human verification
+            "reasoning": "Text is ambiguous and could be interpreted multiple ways"
+        }
 
 
 def main():
-    """Main function to demonstrate the SDK integration."""
+    """Main function to demonstrate the mock agent."""
     print("=" * 60)
-    print("Mock Agent Demo - HumanRPC SDK Integration")
+    print("Mock Agent Demo - Sentiment Analysis with @guard")
     print("=" * 60)
     print()
     print("This demo shows how the @guard decorator works:")
     print(f"- Confidence threshold: {CONFIDENCE_THRESHOLD}")
-    print("- When AI confidence < threshold → Human verification requested")
-    print("- When AI confidence ≥ threshold → AI result returned directly")
+    print("- High confidence: Returns result immediately")
+    print("- Low confidence: Attempts human verification (will fail in demo)")
     print()
     
     # Test cases with different confidence levels
     test_cases = [
-        "Wow, great job team. Another delay. Bullish!",  # Should trigger human verification (sarcastic)
-        "This product is absolutely amazing!",           # High confidence, no human verification
-        "Terrible experience, would not recommend",      # High confidence, no human verification
-        "It's okay I guess, not sure how I feel"        # Low confidence, may trigger human verification
+        "This product is absolutely amazing!",  # High confidence - POSITIVE
+        "This is terrible and awful",           # High confidence - NEGATIVE  
+        "It's okay I guess",                    # Low confidence - will try human verification
     ]
     
     for i, test_text in enumerate(test_cases, 1):
-        print(f"📝 Test {i}: Analyzing \"{test_text}\"")
+        print(f"Test {i}: Analyzing \"{test_text}\"")
         print("-" * 50)
         
         try:
-            result = analyze_text_mock(test_text)
+            result = analyze_sentiment_mock(test_text)
             
-            # Display results
-            print(f"🤖 AI Conclusion: {result.get('agentConclusion', 'UNKNOWN')}")
-            print(f"📊 Confidence: {result.get('confidence', 0):.3f}")
-            print(f"💭 Reasoning: {result.get('reasoning', 'No reasoning')}")
+            print("Result:")
+            print(json.dumps(result, indent=2))
             
-            # Check if human verification was triggered
-            if "human_verdict" in result:
-                print("🤖➡️👤 Human verification was requested!")
-                human_verdict = result["human_verdict"]
-                print(f"👤 Human decision: {human_verdict.get('decision', 'unknown')}")
-                print(f"💰 Payment processed: 0.4 USDC reward")
+            # Check if human verification was attempted
+            if "human_verification_error" in result:
+                print("📝 Note: Human verification was attempted but failed (expected in demo)")
+                print(f"   Error: {result['human_verification_error']}")
+            elif "human_verdict" in result:
+                print("✅ Human verification completed successfully!")
             else:
-                print("🤖 AI was confident enough - no human verification needed")
-            
-            print()
-            
-        except SDKConfigurationError as e:
-            print(f"❌ SDK Configuration Error: {e}")
-            break
-        except PaymentError as e:
-            print(f"❌ Payment Error: {e}")
-            print(f"   Wallet: {agent.wallet.get_public_key()}")
-            break
-        except HumanVerificationError as e:
-            print(f"❌ Human verification failed: {e}")
-            print("   (This is expected if HumanRPC server is not running)")
+                print("🤖 AI analysis was confident enough - no human verification needed")
+                
         except Exception as e:
-            print(f"❌ Unexpected error: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"❌ Error: {e}")
         
         print()
 
 
 if __name__ == "__main__":
-    # Verify required environment variables
+    # Check if we have a private key (needed for wallet initialization)
     if not os.getenv("SOLANA_PRIVATE_KEY"):
-        print("❌ Missing SOLANA_PRIVATE_KEY environment variable")
-        print("Please set it in your .env file")
-        sys.exit(1)
-    
-    # Show configuration
-    print("🔧 Agent Configuration:")
-    print(f"   Network: {agent.network}")
-    print(f"   Agent Name: {agent.default_agent_name}")
-    print(f"   Reward: {agent.default_reward}")
-    print(f"   Category: {agent.default_category}")
-    print(f"   Escrow: {agent.default_escrow_amount}")
-    print(f"   Confidence Threshold: {CONFIDENCE_THRESHOLD}")
-    print(f"   Wallet: {agent.wallet.get_public_key()}")
-    print()
+        print("⚠️  SOLANA_PRIVATE_KEY not set - human verification will fail")
+        print("   This is expected for the demo. The agent will fall back to original results.")
+        print()
     
     main()

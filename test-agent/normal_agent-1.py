@@ -8,6 +8,8 @@ Now integrated with HumanRPC SDK for automatic Human RPC when confidence is low.
 import json
 import os
 import sys
+import time
+import requests
 from dotenv import load_dotenv
 import google.generativeai as genai
 
@@ -17,6 +19,48 @@ from human_rpc_sdk import AutoAgent, guard, HumanVerificationError, SDKConfigura
 
 # Load environment variables
 load_dotenv()
+
+
+def calculate_consensus_params(ai_certainty: float) -> dict:
+    """
+    Calculate consensus parameters using the same algorithm as the Human RPC API.
+    This replicates the Inverse Confidence Sliding Scale algorithm.
+    
+    Args:
+        ai_certainty: AI confidence level (0.5 to 1.0)
+        
+    Returns:
+        Dictionary with requiredVoters and consensusThreshold
+    """
+    # Algorithm bounds (matching the Human RPC API)
+    N_MIN = 3   # Minimum number of voters
+    N_MAX = 15  # Maximum number of voters
+    T_MIN = 0.51  # Minimum consensus threshold (51%)
+    T_MAX = 0.90  # Maximum consensus threshold (90%)
+    CERTAINTY_MIN = 0.5  # Minimum AI certainty
+    CERTAINTY_MAX = 1.0  # Maximum AI certainty
+    
+    # Clamp certainty to valid range
+    clamped_certainty = max(CERTAINTY_MIN, min(CERTAINTY_MAX, ai_certainty))
+    
+    # Calculate Uncertainty Factor (U)
+    uncertainty = (1.0 - clamped_certainty) / (CERTAINTY_MAX - CERTAINTY_MIN)
+    uncertainty = max(0, min(1, uncertainty))
+    
+    # Calculate Required Voters (N)
+    raw_voters = N_MIN + int(uncertainty * (N_MAX - N_MIN) + 0.5)  # Round up
+    voters = raw_voters + 1 if raw_voters % 2 == 0 else raw_voters  # Make odd to prevent ties
+    required_voters = max(N_MIN, min(N_MAX, voters))
+    
+    # Calculate Consensus Threshold (T)
+    consensus_threshold = T_MIN + (uncertainty * (T_MAX - T_MIN))
+    consensus_threshold = max(T_MIN, min(T_MAX, consensus_threshold))
+    
+    return {
+        "requiredVoters": required_voters,
+        "consensusThreshold": consensus_threshold,
+        "uncertaintyFactor": uncertainty
+    }
 
 # Initialize HumanRPC SDK with custom configuration for this agent
 # The SDK auto-manages wallet creation and handles 402 Payment Required responses
@@ -31,29 +75,13 @@ agent = AutoAgent(
 )
 
 # Confidence threshold for triggering Human RPC
-CONFIDENCE_THRESHOLD = 0.99
+CONFIDENCE_THRESHOLD = 0.80
 
 
-@guard(
-    threshold=CONFIDENCE_THRESHOLD,  # Use the confidence threshold
-    agent_id="SarcasmDetector-v1",  # Agent identifier
-    reward="0.4 USDC",  # Reward for human verification
-    reward_amount=0.4,  # Reward amount as float
-    category="Sarcasm Detection",  # Task category
-    escrow_amount="0.8 USDC",  # Escrow amount (2x reward)
-    timeout=300,  # 5 minutes timeout for human response
-    fallback_on_error=True  # Return original result if human verification fails
-)
 def analyze_text(text: str) -> dict:
     """
-    Analyze text for sentiment using LLM with automatic human verification.
-    
-    This function is decorated with @guard which automatically:
-    - Runs the AI analysis
-    - Checks confidence against threshold (0.99)
-    - Calls Human RPC if confidence is low
-    - Handles Solana payments automatically
-    - Returns combined AI + human result
+    Analyze text for sentiment using LLM with manual human verification handling.
+    This version allows us to start real-time polling immediately when Human RPC is triggered.
     
     Args:
         text: The text/query to analyze (user query)
@@ -79,6 +107,8 @@ def analyze_text(text: str) -> dict:
     system_prompt = """You are an expert at analyzing crypto-twitter slang and detecting sentiment.
 Analyze the given text and determine if it's POSITIVE or NEGATIVE sentiment.
 Pay special attention to sarcasm, irony, and crypto-twitter slang terms.
+
+IMPORTANT: Be conservative with confidence scores. If the text is ambiguous, unclear, or could be interpreted multiple ways, use a confidence score below 0.8. Only use high confidence (0.9+) for very clear, unambiguous sentiment.
 
 Return ONLY valid JSON in this exact format:
 {
@@ -132,6 +162,237 @@ Return ONLY valid JSON in this exact format:
         raise ValueError(f"Failed to analyze text: {e}")
 
 
+def handle_human_rpc_with_realtime_polling(ai_result: dict) -> dict:
+    """
+    Handle Human RPC with immediate real-time polling.
+    This starts polling as soon as the task is created, not waiting for SDK completion.
+    """
+    confidence = ai_result.get("confidence", 1.0)
+    
+    # Show consensus parameters
+    consensus_params = calculate_consensus_params(confidence)
+    print()
+    print("🧮 THIS AGENT'S VOTING REQUIREMENTS:")
+    print(f"   🎯 AI Confidence: {confidence:.3f}")
+    print(f"   👥 Required Voters: {consensus_params['requiredVoters']}")
+    print(f"   📊 Consensus Threshold: {consensus_params['consensusThreshold'] * 100:.1f}%")
+    print(f"   🎲 Minimum Votes Needed: {int(consensus_params['requiredVoters'] * consensus_params['consensusThreshold']) + 1}")
+    print()
+    print("⏳ Triggering Human RPC and starting real-time updates...")
+    
+    # Prepare context
+    context = {
+        "type": "ai_verification",
+        "summary": f"Verify AI analysis from analyze_text. Confidence: {confidence:.3f}",
+        "data": {
+            "userQuery": ai_result["userQuery"],
+            "agentConclusion": ai_result["agentConclusion"],
+            "confidence": confidence,
+            "reasoning": ai_result["reasoning"]
+        }
+    }
+    
+    # Start Human RPC in background thread
+    import threading
+    import concurrent.futures
+    
+    def call_human_rpc():
+        try:
+            return agent.ask_human_rpc(
+                text=ai_result["userQuery"],
+                agentName="SarcasmDetector-v1",
+                reward="0.4 USDC",
+                rewardAmount=0.4,
+                category="Sarcasm Detection",
+                escrowAmount="0.8 USDC",
+                context=context
+            )
+        except Exception as e:
+            print(f"\n❌ Human RPC error: {e}")
+            return None
+    
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future = executor.submit(call_human_rpc)
+        
+        # Give it a moment to create the task
+        time.sleep(3)
+        
+        # Try to get the latest task ID
+        try:
+            response = requests.get("http://localhost:3000/api/v1/tasks", timeout=10)
+            if response.status_code == 200:
+                tasks = response.json()
+                if tasks and len(tasks) > 0:
+                    # Get the most recent task
+                    latest_task = tasks[0]
+                    task_id = latest_task.get("taskId")
+                    
+                    if task_id:
+                        print(f"📋 Task created: {task_id}")
+                        print("🚀 Starting real-time voting updates...")
+                        print()
+                        
+                        # Start real-time polling
+                        stop_event = threading.Event()
+                        poll_thread = threading.Thread(
+                            target=lambda: poll_task_progress_continuous(task_id, max_duration_minutes=15),
+                            args=()
+                        )
+                        poll_thread.start()
+                        
+                        # Wait for either polling to complete or Human RPC to finish
+                        try:
+                            human_result = future.result(timeout=900)  # 15 minutes max
+                            stop_event.set()
+                            poll_thread.join(timeout=5)
+                            
+                            if human_result:
+                                print("\n✅ Human RPC completed successfully!")
+                                # Combine AI result with human verdict
+                                combined_result = ai_result.copy()
+                                combined_result["human_verdict"] = human_result
+                                return combined_result
+                            
+                        except concurrent.futures.TimeoutError:
+                            print("\n⏰ Human RPC timeout - but polling may continue...")
+                            stop_event.set()
+                            poll_thread.join(timeout=5)
+                    
+        except Exception as e:
+            print(f"⚠️  Could not start real-time polling: {e}")
+            print("   Falling back to SDK polling...")
+            human_result = future.result()
+            if human_result:
+                combined_result = ai_result.copy()
+                combined_result["human_verdict"] = human_result
+                return combined_result
+    
+    # Return original result if Human RPC failed
+    return ai_result
+
+
+def poll_task_progress_continuous(task_id: str, max_duration_minutes: int = 10) -> dict:
+    """
+    Continuously poll task progress to show real-time voting updates.
+    Updates every 2 seconds and shows live voting progress.
+    
+    Args:
+        task_id: The task ID to poll
+        max_duration_minutes: Maximum time to poll in minutes
+        
+    Returns:
+        Final task status with voting information
+    """
+    
+    human_rpc_url = os.getenv("HUMAN_RPC_URL", "http://localhost:3000/api/v1/tasks")
+    task_url = f"{human_rpc_url}/{task_id}"
+    
+    print("=" * 60)
+    print(f"🔄 LIVE VOTING UPDATES - Task: {task_id}")
+    print("=" * 60)
+    print("   Updates every 2 seconds - Press Ctrl+C to stop")
+    print()
+    
+    start_time = time.time()
+    max_duration_seconds = max_duration_minutes * 60
+    poll_count = 0
+    last_vote_count = -1
+    
+    try:
+        while True:
+            poll_count += 1
+            elapsed_time = time.time() - start_time
+            
+            # Check timeout
+            if elapsed_time >= max_duration_seconds:
+                print(f"⏰ Polling timeout after {max_duration_minutes} minutes")
+                break
+            
+            try:
+                response = requests.get(task_url, timeout=10)
+                if response.status_code == 200:
+                    task_data = response.json()
+                    status = task_data.get("status", "unknown")
+                    consensus_info = task_data.get("consensus", {})
+                    
+                    current_votes = consensus_info.get("currentVoteCount", 0)
+                    required_votes = consensus_info.get("requiredVoters", 0)
+                    yes_votes = consensus_info.get("yesVotes", 0)
+                    no_votes = consensus_info.get("noVotes", 0)
+                    consensus_threshold = consensus_info.get("consensusThreshold", 0.0)
+                    ai_certainty = consensus_info.get("aiCertainty", 0.0)
+                    
+                    # Clear previous line and show current status
+                    print(f"\r🕐 {int(elapsed_time//60):02d}:{int(elapsed_time%60):02d} | ", end="")
+                    
+                    # Show voting progress
+                    progress_pct = (current_votes / required_votes * 100) if required_votes > 0 else 0
+                    progress_bar = "█" * int(progress_pct // 5) + "░" * (20 - int(progress_pct // 5))
+                    
+                    print(f"📊 [{progress_bar}] {current_votes}/{required_votes} votes ({progress_pct:.1f}%)", end="")
+                    
+                    if yes_votes + no_votes > 0:
+                        current_majority = max(yes_votes, no_votes) / (yes_votes + no_votes)
+                        majority_leader = "YES" if yes_votes > no_votes else "NO"
+                        print(f" | {majority_leader}: {current_majority*100:.1f}%", end="")
+                    
+                    # Show if new vote came in
+                    if current_votes > last_vote_count and last_vote_count >= 0:
+                        print(" 🆕 NEW VOTE!", end="")
+                    
+                    last_vote_count = current_votes
+                    
+                    # Check if completed
+                    if status == "completed":
+                        print("\n")
+                        print("🎉" * 20)
+                        print("🏁 CONSENSUS REACHED!")
+                        print("🎉" * 20)
+                        
+                        result = task_data.get("result", {})
+                        if result:
+                            decision = result.get("decision", "unknown")
+                            consensus_data = result.get("consensus", {})
+                            final_majority = consensus_data.get("majorityPercentage", 0) * 100
+                            
+                            print()
+                            print("📋 FINAL RESULTS:")
+                            print(f"   🎯 Decision: {decision.upper()}")
+                            print(f"   📊 Final Votes: {current_votes}/{required_votes}")
+                            print(f"   ✅ Yes Votes: {yes_votes}")
+                            print(f"   ❌ No Votes: {no_votes}")
+                            print(f"   📈 Final Majority: {final_majority:.1f}%")
+                            print(f"   🎯 Required Threshold: {consensus_threshold*100:.1f}%")
+                            print(f"   ⏱️  Total Time: {int(elapsed_time//60):02d}:{int(elapsed_time%60):02d}")
+                        
+                        return task_data
+                    
+                    # Flush output for real-time display
+                    sys.stdout.flush()
+                    
+                else:
+                    print(f"\n⚠️  Poll failed: HTTP {response.status_code}")
+                    break
+                    
+            except requests.exceptions.RequestException as e:
+                print(f"\n❌ Network error: {e}")
+                print("   Retrying in 5 seconds...")
+                time.sleep(5)
+                continue
+            except Exception as e:
+                print(f"\n❌ Poll error: {e}")
+                break
+            
+            # Wait before next poll (2 seconds for real-time feel)
+            time.sleep(2)
+            
+    except KeyboardInterrupt:
+        print("\n\n⏹️  Polling stopped by user")
+        print(f"   Last known status: {current_votes}/{required_votes} votes")
+    
+    return {}
+
+
 def main():
     """Main function to run the normal agent with integrated Human RPC support."""
     print("=" * 60)
@@ -143,21 +404,30 @@ def main():
     print(f"when confidence is below the threshold ({CONFIDENCE_THRESHOLD}).")
     print("The @guard decorator automatically handles the confidence check and Human RPC calls.")
     print()
+    print("🧮 Consensus Algorithm Info:")
+    print("   • Lower AI confidence → More voters required + Higher consensus threshold")
+    print("   • Voters: 3-15 people (always odd number to prevent ties)")
+    print("   • Threshold: 51%-90% agreement needed")
+    print("   • Multi-phase voting: General → Top 50% → Top 10% if needed")
+    print()
+
     
-    # Hardcoded test input that should trick the AI
-    test_text = "Wow, great job team. Another delay. Bullish!"
+    # Test input designed to have moderate confidence (0.7-0.75) to trigger human verification
+    test_text = "Not sure about this one."
     
     print(f"📝 Analyzing text: \"{test_text}\"")
     print()
     
     try:
-        # The @guard decorator on analyze_text will:
-        # 1. Run the AI analysis first
-        # 2. Check confidence against threshold
-        # 3. Automatically call Human RPC if confidence is low
-        # 4. Handle automatic payment (SOL or USDC)
-        # 5. Return combined result with human verdict if needed
-        result = analyze_text(test_text)
+        # Step 1: Run AI analysis
+        ai_result = analyze_text(test_text)
+        confidence = ai_result.get("confidence", 1.0)
+        
+        # Step 2: Check if Human RPC is needed and handle it with real-time polling
+        if confidence < CONFIDENCE_THRESHOLD:
+            result = handle_human_rpc_with_realtime_polling(ai_result)
+        else:
+            result = ai_result
         
         print()
         print("=" * 60)
@@ -168,24 +438,33 @@ def main():
         
         # Check if human verification was triggered
         has_human_verdict = "human_verdict" in result
+        has_verification_error = "human_verification_error" in result
         conclusion = result.get("agentConclusion", "UNKNOWN")
         confidence = result.get("confidence", 1.0)
         
-        # Highlight if it got it wrong (this is sarcastic, should be NEGATIVE)
-        if conclusion == "POSITIVE":
-            print("⚠️  WARNING: This text is sarcastic and should be NEGATIVE!")
-            if has_human_verdict:
-                print("   🤖➡️👤 Human RPC was called due to low AI confidence.")
-                human_decision = result.get("human_verdict", {}).get("decision", "unknown")
-                print(f"   👤 Human verdict: {human_decision}")
-            else:
-                print("   🤖 AI had high confidence but still got it wrong.")
+        # Show analysis results
+        print(f"🤖 AI Analysis: {conclusion} (confidence: {confidence:.2f})")
+        
+        # Show final results
+        if confidence < CONFIDENCE_THRESHOLD:
+            print("🤖➡️👤 Human RPC was triggered due to low confidence")
         else:
-            print("✅ Correctly identified as NEGATIVE (sarcastic).")
-            if has_human_verdict:
-                print("   🤖➡️👤 Human verification confirmed the AI's analysis.")
-            else:
-                print("   🤖 AI analysis was confident and correct.")
+            print("✅ AI was confident enough - no human verification needed")
+        
+        # Show final results
+        has_human_verdict = "human_verdict" in result
+        if has_human_verdict:
+            human_decision = result.get("human_verdict", {}).get("decision", "unknown")
+            print(f"   👤 Final human verdict: {human_decision}")
+        
+        print()
+        print("📋 FINAL ANALYSIS:")
+        final_conclusion = result.get("agentConclusion", "UNKNOWN")
+        final_confidence = result.get("confidence", 1.0)
+        print(f"   🎯 Conclusion: {final_conclusion}")
+        print(f"   📊 Confidence: {final_confidence:.3f}")
+        if has_human_verdict:
+            print(f"   👤 Human Verified: Yes")
         
         # Show payment information if human verification occurred
         if has_human_verdict:
