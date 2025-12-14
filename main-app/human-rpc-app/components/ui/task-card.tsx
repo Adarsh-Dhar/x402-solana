@@ -13,6 +13,7 @@ interface TaskCardProps {
 
 export default function TaskCard({ task, onSelect }: TaskCardProps) {
   const isCompleted = task.status === "completed"
+  const isAborted = task.status === "aborted"
   
   // Extract result information for completed tasks
   const getTaskResult = () => {
@@ -42,6 +43,8 @@ export default function TaskCard({ task, onSelect }: TaskCardProps) {
       className={`group relative overflow-hidden rounded-xl border p-5 backdrop-blur-sm transition-all ${
         isCompleted 
           ? "border-border/50 bg-card/30 hover:border-[var(--solana-purple)]/30 hover:shadow-[0_0_30px_rgba(139,92,246,0.1)]"
+          : isAborted
+          ? "border-border/50 bg-card/20 hover:border-[var(--alert-red)]/30 hover:shadow-[0_0_30px_rgba(239,68,68,0.1)]"
           : "border-border bg-card/50 hover:border-[var(--neon-green)]/30 hover:shadow-[0_0_30px_rgba(34,197,94,0.1)]"
       }`}
     >
@@ -52,14 +55,20 @@ export default function TaskCard({ task, onSelect }: TaskCardProps) {
       {isCompleted && (
         <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-transparent via-[var(--solana-purple)] to-transparent" />
       )}
+      
+      {isAborted && (
+        <div className="absolute inset-x-0 top-0 h-0.5 bg-gradient-to-r from-transparent via-[var(--alert-red)] to-transparent" />
+      )}
 
       <div className="mb-4 flex items-start justify-between">
         <div className="flex items-center gap-3">
           <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${
-            isCompleted ? "bg-[var(--solana-purple)]/10" : "bg-muted"
+            isCompleted ? "bg-[var(--solana-purple)]/10" : isAborted ? "bg-[var(--alert-red)]/10" : "bg-muted"
           }`}>
             {isCompleted ? (
               <CheckCircle className="h-5 w-5 text-[var(--solana-purple)]" />
+            ) : isAborted ? (
+              <XCircle className="h-5 w-5 text-[var(--alert-red)]" />
             ) : (
               <Bot className="h-5 w-5 text-muted-foreground" />
             )}
@@ -86,6 +95,11 @@ export default function TaskCard({ task, onSelect }: TaskCardProps) {
             {isPositiveResult && <CheckCircle className="mr-1 h-3 w-3" />}
             {isNegativeResult && <XCircle className="mr-1 h-3 w-3" />}
             {taskResult || "Completed"}
+          </Badge>
+        ) : isAborted ? (
+          <Badge className="bg-[var(--alert-red)]/20 text-[var(--alert-red)] border-[var(--alert-red)]/30">
+            <XCircle className="mr-1 h-3 w-3" />
+            Aborted
           </Badge>
         ) : (
           <Badge variant="secondary" className="bg-muted text-muted-foreground">

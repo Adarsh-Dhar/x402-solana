@@ -19,7 +19,7 @@ export interface Task {
   agentName: string
   reward: string
   rewardAmount: number
-  status: "open" | "urgent" | "completed"
+  status: "open" | "urgent" | "completed" | "aborted"
   createdAt: string
   category: string
   taskTier?: "TRAINING" | "LIVE_FIRE" | "DISPUTE" // Task tier for rank restrictions
@@ -67,8 +67,10 @@ export default function HumanRPCApp() {
   >([])
   const [activeTasks, setActiveTasks] = useState<Task[]>([])
   const [completedTasks, setCompletedTasks] = useState<Task[]>([])
+  const [abortedTasks, setAbortedTasks] = useState<Task[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [taskCategory, setTaskCategory] = useState<"ongoing" | "aborted" | "completed">("ongoing")
 
   // Fetch tasks from API
   useEffect(() => {
@@ -76,28 +78,34 @@ export default function HumanRPCApp() {
       try {
         setIsLoading(true)
         setError(null)
-        // Include userEmail in query params if available so backend can filter out already-voted tasks
+        
+        // Fetch tasks for all categories
         const userEmail = session?.user?.email
-        const url = userEmail 
-          ? `/api/v1/tasks?userEmail=${encodeURIComponent(userEmail)}`
-          : "/api/v1/tasks"
-        const response = await fetch(url)
-        if (!response.ok) {
-          throw new Error(`Failed to fetch tasks: ${response.statusText}`)
-        }
-        const data = await response.json()
+        const baseUrl = userEmail 
+          ? `/api/v1/tasks?userEmail=${encodeURIComponent(userEmail)}&category=`
+          : "/api/v1/tasks?category="
         
-        // Separate active and completed tasks
-        const active = data.filter((task: Task) => task.status === "open" || task.status === "urgent")
-        const completed = data.filter((task: Task) => task.status === "completed")
+        // Fetch ongoing tasks
+        const ongoingResponse = await fetch(baseUrl + "ongoing")
+        const ongoingData = ongoingResponse.ok ? await ongoingResponse.json() : []
         
-        setActiveTasks(active)
-        setCompletedTasks(completed)
+        // Fetch completed tasks
+        const completedResponse = await fetch(baseUrl + "completed")
+        const completedData = completedResponse.ok ? await completedResponse.json() : []
+        
+        // Fetch aborted tasks
+        const abortedResponse = await fetch(baseUrl + "aborted")
+        const abortedData = abortedResponse.ok ? await abortedResponse.json() : []
+        
+        setActiveTasks(ongoingData)
+        setCompletedTasks(completedData)
+        setAbortedTasks(abortedData)
       } catch (err) {
         console.error("Error fetching tasks:", err)
         setError(err instanceof Error ? err.message : "Failed to load tasks")
-        setActiveTasks([]) // Set empty arrays on error
+        setActiveTasks([])
         setCompletedTasks([])
+        setAbortedTasks([])
       } finally {
         setIsLoading(false)
       }
@@ -190,9 +198,12 @@ export default function HumanRPCApp() {
             <Dashboard 
               activeTasks={activeTasks}
               completedTasks={completedTasks}
+              abortedTasks={abortedTasks}
               onTaskSelect={handleTaskSelect}
               isLoading={isLoading}
               error={error}
+              taskCategory={taskCategory}
+              onCategoryChange={setTaskCategory}
             />
           )}
           {currentView === "task-details" && selectedTask && (

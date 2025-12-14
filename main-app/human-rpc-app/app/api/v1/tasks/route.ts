@@ -1061,10 +1061,11 @@ function formatRelativeTime(date: Date): string {
 /**
  * Map database status to frontend status
  */
-function mapStatus(dbStatus: string): "open" | "urgent" | "completed" {
+function mapStatus(dbStatus: string): "open" | "urgent" | "completed" | "aborted" {
   if (dbStatus === "pending") return "open"
   if (dbStatus === "urgent") return "urgent"
   if (dbStatus === "completed") return "completed"
+  if (dbStatus === "aborted") return "aborted"
   return "open" // default
 }
 
@@ -1189,8 +1190,8 @@ async function cleanupExpiredSessions(prisma: PrismaClient) {
       }
     })
 
-    // Clean up pending tasks from expired sessions
-    const deletedTasks = await taskModel.deleteMany({
+    // Mark pending tasks from expired sessions as aborted
+    const abortedTasks = await taskModel.updateMany({
       where: {
         agentSessionId: {
           in: expiredSessions.map((s: any) => s.id)
@@ -1198,10 +1199,18 @@ async function cleanupExpiredSessions(prisma: PrismaClient) {
         status: {
           in: ["pending", "urgent"]
         }
+      },
+      data: {
+        status: "aborted",
+        result: {
+          message: "Task aborted - agent session expired",
+          timestamp: new Date().toISOString(),
+          reason: "session_expired"
+        }
       }
     })
 
-    console.log(`[Tasks API] Expired ${expiredSessions.length} sessions, cleaned up ${deletedTasks.count} tasks`)
+    console.log(`[Tasks API] Expired ${expiredSessions.length} sessions, aborted ${abortedTasks.count} tasks`)
 
   } catch (error: any) {
     console.error("[Tasks API] Session cleanup error:", error)
@@ -1233,24 +1242,78 @@ export async function GET(req: Request) {
     // Clean up expired agent sessions first
     await cleanupExpiredSessions(prisma)
 
-    // Fetch tasks from active agent sessions only
+    // Get filter parameter for task category
+    const category = url.searchParams.get("category") || "ongoing" // Default to ongoing
+
+    // Fetch tasks based on category
     let tasks
+    let whereClause: any = {}
+    
+    if (category === "ongoing") {
+      // Only tasks from active agent sessions with pending/urgent status
+      whereClause = {
+        AND: [
+          {
+            OR: [
+              // Tasks with active agent sessions
+              {
+                agentSession: {
+                  status: "active"
+                }
+              },
+              // Tasks without agent sessions (legacy tasks) that are still pending
+              {
+                AND: [
+                  { agentSessionId: null },
+                  { status: { in: ["pending", "urgent"] } }
+                ]
+              }
+            ]
+          },
+          {
+            status: { in: ["pending", "urgent"] }
+          }
+        ]
+      }
+    } else if (category === "aborted") {
+      // Tasks that were aborted due to agent termination
+      whereClause = {
+        status: "aborted"
+      }
+    } else if (category === "completed") {
+      // Tasks that reached consensus
+      whereClause = {
+        status: "completed"
+      }
+    } else {
+      // Invalid category, default to ongoing
+      whereClause = {
+        AND: [
+          {
+            OR: [
+              {
+                agentSession: {
+                  status: "active"
+                }
+              },
+              {
+                AND: [
+                  { agentSessionId: null },
+                  { status: { in: ["pending", "urgent"] } }
+                ]
+              }
+            ]
+          },
+          {
+            status: { in: ["pending", "urgent"] }
+          }
+        ]
+      }
+    }
+
     try {
       tasks = await taskModel.findMany({
-        where: {
-          OR: [
-            // Tasks with active agent sessions
-            {
-              agentSession: {
-                status: "active"
-              }
-            },
-            // Tasks without agent sessions (legacy tasks)
-            {
-              agentSessionId: null
-            }
-          ]
-        },
+        where: whereClause,
         include: {
           agentSession: {
             select: {
@@ -1265,7 +1328,7 @@ export async function GET(req: Request) {
           createdAt: "desc",
         },
       })
-      console.log(`[Tasks API] Found ${tasks.length} tasks from active sessions`)
+      console.log(`[Tasks API] Found ${tasks.length} ${category} tasks`)
     } catch (dbError: any) {
       console.error("[Tasks API] Database query error:", dbError)
       console.error("[Tasks API] Error details:", {

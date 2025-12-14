@@ -153,22 +153,30 @@ export async function DELETE(req: Request) {
       }
     })
 
-    // Clean up pending tasks from this session
-    const deletedTasks = await taskModel.deleteMany({
+    // Mark pending tasks from this session as aborted (don't delete them)
+    const abortedTasks = await taskModel.updateMany({
       where: {
         agentSessionId: session.id,
         status: {
           in: ["pending", "urgent"]
         }
+      },
+      data: {
+        status: "aborted",
+        result: {
+          message: "Task aborted - agent session terminated",
+          timestamp: new Date().toISOString(),
+          reason: "agent_terminated"
+        }
       }
     })
 
-    console.log(`[Agent Sessions] Terminated session ${session.id}, cleaned up ${deletedTasks.count} tasks`)
+    console.log(`[Agent Sessions] Terminated session ${session.id}, aborted ${abortedTasks.count} tasks`)
 
     return NextResponse.json({
       message: "Session terminated",
       sessionId: session.id,
-      tasksCleanedUp: deletedTasks.count
+      tasksAborted: abortedTasks.count
     })
 
   } catch (error: any) {
@@ -276,8 +284,8 @@ async function cleanupExpiredSessions(prisma: PrismaClient) {
       }
     })
 
-    // Clean up pending tasks from expired sessions
-    const deletedTasks = await taskModel.deleteMany({
+    // Mark pending tasks from expired sessions as aborted
+    const abortedTasks = await taskModel.updateMany({
       where: {
         agentSessionId: {
           in: expiredSessions.map((s: any) => s.id)
@@ -285,10 +293,18 @@ async function cleanupExpiredSessions(prisma: PrismaClient) {
         status: {
           in: ["pending", "urgent"]
         }
+      },
+      data: {
+        status: "aborted",
+        result: {
+          message: "Task aborted - agent session expired",
+          timestamp: new Date().toISOString(),
+          reason: "session_expired"
+        }
       }
     })
 
-    console.log(`[Agent Sessions] Expired ${expiredSessions.length} sessions, cleaned up ${deletedTasks.count} tasks`)
+    console.log(`[Agent Sessions] Expired ${expiredSessions.length} sessions, aborted ${abortedTasks.count} tasks`)
 
   } catch (error: any) {
     console.error("[Agent Sessions] Cleanup error:", error)

@@ -420,7 +420,7 @@ class AutoAgent:
                 
                 if response.status_code == 200:
                     data = response.json()
-                    print(f"[Session] Session terminated: {data.get('tasksCleanedUp', 0)} tasks cleaned up")
+                    print(f"[Session] Session terminated: {data.get('tasksAborted', 0)} tasks aborted")
                 else:
                     print(f"[Session] Failed to terminate session: {response.status_code}")
             
