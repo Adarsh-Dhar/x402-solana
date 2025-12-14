@@ -261,6 +261,44 @@ export async function PATCH(
         finalPhase: currentPhase,
         completedAt: new Date().toISOString(),
       }
+
+      // Calculate and update user points based on vote accuracy
+      try {
+        const { calculateAndUpdatePoints } = await import("@/lib/points-calculator")
+        await calculateAndUpdatePoints(prisma, resolvedParams.taskId, consensusResult.decision)
+        console.log("[Task API] Points calculated successfully for task:", resolvedParams.taskId)
+      } catch (pointsError: any) {
+        // Log error but don't fail the request - points calculation is non-critical
+        console.error("[Task API] Failed to calculate points:", pointsError?.message || pointsError)
+      }
+
+      // Distribute SOL rewards to winning voters
+      try {
+        const { distributeSolRewardToWinners, TASK_REWARD_LAMPORTS } = await import("@/lib/rewards-payout")
+        const rewards = await distributeSolRewardToWinners(
+          prisma,
+          resolvedParams.taskId,
+          consensusResult.decision,
+          TASK_REWARD_LAMPORTS
+        )
+
+        // Persist rewards metadata on the task result for UI/inspection
+        if (rewards) {
+          result = {
+            ...result,
+            rewards,
+          }
+          console.log("[Task API] SOL rewards distributed:", {
+            taskId: resolvedParams.taskId,
+            winnersCount: rewards.winnersCount,
+            totalDistributed: rewards.totalLamportsDistributed,
+            totalSol: rewards.totalLamportsDistributed / 1000000000, // Convert lamports to SOL
+          })
+        }
+      } catch (rewardsError: any) {
+        // Log error but don't fail the request - rewards distribution is non-critical
+        console.error("[Task API] Failed to distribute SOL rewards:", rewardsError?.message || rewardsError)
+      }
     } else if (consensusResult.shouldTransition) {
       // No consensus but should transition to next phase
       try {

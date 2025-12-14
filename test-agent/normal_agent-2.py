@@ -635,19 +635,19 @@ def main():
             human_verdict = result.get("human_verdict", {})
             human_decision = human_verdict.get("decision", "unknown")
             consensus_reached = human_verdict.get("result", {}).get("consensus", "no") == "yes"
+            final_votes = human_verdict.get("result", {}).get("finalVotes", {})
+            yes_votes = final_votes.get("yes", 0)
+            no_votes = final_votes.get("no", 0)
             
-            if consensus_reached and human_decision != "unknown":
-                # Humans reached consensus and provided a clear decision
-                final_answer = f"Human-verified: {human_decision}"
-                print(f"   🎯 Answer: {final_answer}")
-                print(f"   👤 Human Consensus: YES ({human_decision})")
-            else:
-                # No consensus or unclear decision
+            if consensus_reached:
+                # Humans reached positive consensus
                 final_answer = result.get("agentConclusion", "UNKNOWN")
-                final_votes = human_verdict.get("result", {}).get("finalVotes", {})
-                yes_votes = final_votes.get("yes", 0)
-                no_votes = final_votes.get("no", 0)
-                
+                print(f"   🎯 Answer: {final_answer}")
+                print(f"   ✅ Human Consensus: YES ({yes_votes} accept, {no_votes} reject)")
+                print(f"   👤 Status: APPROVED - Humans verified the AI's answer")
+            else:
+                # No consensus reached
+                final_answer = result.get("agentConclusion", "UNKNOWN")
                 print(f"   🎯 AI Answer: {final_answer}")
                 print(f"   ❌ Human Consensus: NO ({no_votes} reject, {yes_votes} accept)")
                 print(f"   ⚠️  Final Status: DISPUTED - No human consensus reached")
