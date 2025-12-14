@@ -18,6 +18,7 @@ from .wallet import WalletManager
 from .invoices import Invoice, parse_invoice_from_response
 from .solana_utils import build_payment_transaction, create_payment_header
 from .exceptions import SDKConfigurationError, PaymentError, HumanVerificationError
+from .reiterator import ReiteratorManager
 
 
 class AutoAgent:
@@ -41,7 +42,11 @@ class AutoAgent:
         default_category: str = "Analysis",
         default_escrow_amount: str = "0.6 USDC",
         enable_session_management: bool = True,
-        heartbeat_interval: int = 60  # seconds
+        heartbeat_interval: int = 60,  # seconds
+        reiterator: bool = False,
+        max_retry_attempts: int = 3,
+        backoff_strategy: str = "exponential",
+        base_delay: float = 1.0
     ):
         """
         Initialize the AutoAgent.
@@ -59,6 +64,10 @@ class AutoAgent:
             default_escrow_amount: Default escrow amount as string (e.g., "0.6 USDC")
             enable_session_management: Enable automatic session management and heartbeats
             heartbeat_interval: Interval in seconds between heartbeat updates
+            reiterator: Enable automatic retry on negative consensus
+            max_retry_attempts: Maximum number of retry attempts for reiterator
+            backoff_strategy: Backoff strategy for reiterator ("exponential", "linear", "fixed")
+            base_delay: Base delay in seconds for reiterator backoff
             
         Raises:
             SDKConfigurationError: If configuration is invalid
@@ -101,6 +110,19 @@ class AutoAgent:
         # Initialize HTTP session
         self.session = requests.Session()
         self.session.timeout = timeout
+        
+        # Initialize reiterator if enabled
+        self.reiterator_enabled = reiterator
+        self.reiterator = None
+        if reiterator:
+            try:
+                self.reiterator = ReiteratorManager(
+                    max_attempts=max_retry_attempts,
+                    backoff_strategy=backoff_strategy,
+                    base_delay=base_delay
+                )
+            except Exception as e:
+                raise SDKConfigurationError(f"Failed to initialize reiterator: {e}")
         
         # Start session management if enabled
         if self.enable_session_management:
@@ -305,7 +327,8 @@ class AutoAgent:
         
         headers = {"Content-Type": "application/json"}
         
-        try:
+        # Define the task execution function for reiterator
+        def execute_task():
             # Make request (automatically handles 402 payments)
             response = self.post(self.human_rpc_url, json=payload, headers=headers)
             
@@ -330,6 +353,14 @@ class AutoAgent:
                     f"Unexpected response status: {response.status_code}. "
                     f"Response: {response.text[:500]}"
                 )
+        
+        try:
+            # Use reiterator if enabled, otherwise execute directly
+            if self.reiterator_enabled and self.reiterator:
+                print("[Reiterator] Executing task with automatic retry enabled")
+                return self.reiterator.execute_with_retry(execute_task)
+            else:
+                return execute_task()
                 
         except requests.RequestException as e:
             raise HumanVerificationError(f"HTTP request failed: {e}")
@@ -581,3 +612,44 @@ class AutoAgent:
                 time.sleep(poll_interval)
             except json.JSONDecodeError as e:
                 raise HumanVerificationError(f"Failed to parse task response: {e}")
+    
+    def enable_reiterator(self) -> None:
+        """
+        Enable reiterator functionality for automatic retry on negative consensus.
+        
+        If reiterator was not initialized during construction, creates a new
+        ReiteratorManager with default settings.
+        """
+        if not self.reiterator:
+            self.reiterator = ReiteratorManager()
+        
+        self.reiterator_enabled = True
+        print("[Reiterator] Enabled automatic retry on negative consensus")
+    
+    def disable_reiterator(self) -> None:
+        """
+        Disable reiterator functionality.
+        
+        Stops retry attempts for subsequent tasks while preserving
+        any ongoing iterations.
+        """
+        self.reiterator_enabled = False
+        print("[Reiterator] Disabled automatic retry")
+    
+    def get_reiterator_status(self) -> Dict[str, Any]:
+        """
+        Get current reiterator status and configuration.
+        
+        Returns:
+            Dictionary containing reiterator status information
+        """
+        if not self.reiterator:
+            return {
+                "enabled": False,
+                "active": False,
+                "message": "Reiterator not initialized"
+            }
+        
+        status = self.reiterator.get_status()
+        status["enabled"] = self.reiterator_enabled
+        return status

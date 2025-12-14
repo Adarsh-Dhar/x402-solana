@@ -59,3 +59,32 @@ class HumanVerificationError(SDKError):
     or human verdict retrieval errors.
     """
     pass
+
+
+class ReiteratorConfigurationError(SDKError):
+    """
+    Raised when reiterator configuration parameters are invalid.
+    
+    This includes invalid max_attempts, backoff_strategy, or delay values.
+    """
+    pass
+
+
+class ReiteratorMaxAttemptsError(SDKError):
+    """
+    Raised when maximum retry attempts are reached without positive consensus.
+    
+    This indicates that the reiterator has exhausted all retry attempts
+    and the final result remains negative.
+    """
+    pass
+
+
+class ReiteratorRateLimitError(SDKError):
+    """
+    Raised when rate limiting violations occur during retry attempts.
+    
+    This includes API errors that indicate rate limiting or
+    excessive retry frequency.
+    """
+    pass

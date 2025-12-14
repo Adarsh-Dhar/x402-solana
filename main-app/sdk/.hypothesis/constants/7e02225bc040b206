@@ -1,0 +1,4 @@
+# file: /Users/adarsh/Documents/x402-solana/main-app/sdk/src/human_rpc_sdk/agent.py
+# hypothesis_version: 6.148.7
+
+[0.0, 0.3, 1.0, 200, 202, 402, 404, 500, 600, '/agent-sessions', '/tasks', '0.3 USDC', '0.6 USDC', '1.0.0', 'Analysis', 'Content-Type', 'GET', 'HUMAN_RPC_URL', 'POST', 'SOL', 'SOLANA_RPC_URL', 'SentimentAI-Pro', 'Task Completed', 'UNKNOWN', 'X-PAYMENT', 'active', 'agentConclusion', 'agentName', 'application/json', 'category', 'completed', 'confidence', 'context', 'data', 'decision', 'devnet', 'enabled', 'escrowAmount', 'exponential', 'message', 'metadata', 'network', 'reasoning', 'result', 'reward', 'rewardAmount', 'sdkVersion', 'sentiment', 'sentiment_analysis', 'sessionId', 'startedAt', 'status', 'task_id', 'task_type', 'text', 'timeout', 'unknown', 'userQuery', 'walletAddress']

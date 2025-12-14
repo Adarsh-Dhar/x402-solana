@@ -21,7 +21,8 @@ human_rpc_sdk/
 ├── solana_utils.py      # Transaction building and signing
 ├── invoices.py          # Invoice parsing and validation
 ├── exceptions.py        # Custom exception classes
-└── wallet.py            # Wallet management and key handling
+├── wallet.py            # Wallet management and key handling
+└── reiterator.py        # Reiterator logic and retry management
 ```
 
 ### Component Interactions
@@ -34,18 +35,21 @@ graph TD
     C --> D[Invoice Parser]
     C --> E[Solana Utils]
     C --> F[Wallet Manager]
+    C --> K[Reiterator]
     E --> F
     D --> G[Payment Validation]
     E --> H[Transaction Builder]
     H --> I[Solana Network]
     C --> J[HumanRPC API]
+    K --> J
+    J --> K
 ```
 
 ## Components and Interfaces
 
 ### AutoAgent Class
 
-The main HTTP client that handles automatic payment processing:
+The main HTTP client that handles automatic payment processing and optional reiterator functionality:
 
 ```python
 class AutoAgent:
@@ -54,12 +58,19 @@ class AutoAgent:
                  rpc_url: Optional[str] = None, 
                  human_rpc_url: Optional[str] = None,
                  network: str = "devnet",
-                 timeout: int = 10)
+                 timeout: int = 10,
+                 reiterator: bool = False,
+                 max_retry_attempts: int = 3,
+                 backoff_strategy: str = "exponential",
+                 base_delay: float = 1.0)
     
     def get(self, url: str, headers: dict = None, **kwargs) -> requests.Response
     def post(self, url: str, json: dict = None, **kwargs) -> requests.Response  
     def request(self, method: str, url: str, **kwargs) -> requests.Response
     def ask_human_rpc(self, text: str, **kwargs) -> dict
+    def enable_reiterator(self) -> None
+    def disable_reiterator(self) -> None
+    def get_reiterator_status(self) -> dict
 ```
 
 ### Guard Decorator
@@ -94,6 +105,25 @@ class Invoice:
     def get_amount_lamports(self) -> int
     def get_recipient(self) -> str
     def get_currency(self) -> str
+```
+
+### Reiterator Manager
+
+Automatic retry logic for negative consensus outcomes:
+
+```python
+class ReiteratorManager:
+    def __init__(self, 
+                 max_attempts: int = 3,
+                 backoff_strategy: str = "exponential", 
+                 base_delay: float = 1.0,
+                 max_delay: float = 60.0)
+    
+    def should_retry(self, result: dict, attempt_count: int) -> bool
+    def calculate_delay(self, attempt_count: int) -> float
+    def execute_with_retry(self, task_func: callable, *args, **kwargs) -> dict
+    def get_status(self) -> dict
+    def reset(self) -> None
 ```
 
 ## Data Models
@@ -139,6 +169,35 @@ class Invoice:
         "confidence": 0.95,
         "comment": "Human feedback"
     }
+}
+```
+
+### Reiterator Configuration
+
+```python
+{
+    "enabled": True,
+    "max_attempts": 3,
+    "backoff_strategy": "exponential",  # or "linear", "fixed"
+    "base_delay": 1.0,
+    "max_delay": 60.0,
+    "current_attempt": 0,
+    "total_retries": 0,
+    "last_retry_time": "2024-01-01T12:00:00Z"
+}
+```
+
+### Reiterator Status Response
+
+```python
+{
+    "active": True,
+    "current_task_id": "task_123",
+    "attempt_count": 2,
+    "max_attempts": 3,
+    "next_retry_time": "2024-01-01T12:02:00Z",
+    "total_retries_session": 5,
+    "last_result": "negative"
 }
 ```
 
@@ -197,6 +256,46 @@ The following properties eliminate redundancy while maintaining comprehensive co
 *For any* valid transaction built by the SDK, serializing then deserializing should produce an equivalent transaction structure
 **Validates: Requirements 2.4, 2.5**
 
+**Property 11: Reiterator configuration validation**
+*For any* reiterator configuration parameters, the system should accept valid configurations and reject invalid ones with descriptive error messages
+**Validates: Requirements 9.1, 10.1**
+
+**Property 12: Negative consensus retry trigger**
+*For any* human-RPC task that completes with negative consensus, the reiterator should automatically trigger when enabled and remain inactive when disabled
+**Validates: Requirements 9.2**
+
+**Property 13: Rate limiting and backoff behavior**
+*For any* sequence of retry attempts, the system should implement proper exponential backoff with delays that increase according to the configured strategy
+**Validates: Requirements 9.3**
+
+**Property 14: Parameter preservation during retries**
+*For any* retry attempt, the new task submission should contain identical parameters to the original request
+**Validates: Requirements 9.4**
+
+**Property 15: Positive consensus termination**
+*For any* reiterator sequence that achieves positive consensus, the system should return the successful result and stop further retry attempts
+**Validates: Requirements 9.5**
+
+**Property 16: Status monitoring accuracy**
+*For any* reiterator operation, status queries should return accurate information about current iteration count, active state, and configuration
+**Validates: Requirements 10.2**
+
+**Property 17: Maximum attempts termination**
+*For any* reiterator sequence that reaches maximum retry attempts, the system should return the final negative result and stop retrying
+**Validates: Requirements 10.3**
+
+**Property 18: Error handling during retries**
+*For any* API error encountered during retry attempts, the system should handle failures gracefully while continuing to respect rate limits
+**Validates: Requirements 10.4**
+
+**Property 19: Dynamic configuration changes**
+*For any* dynamic reiterator configuration change, the system should apply changes to subsequent tasks while preserving ongoing iterations
+**Validates: Requirements 10.5**
+
+**Property 20: Debug logging for retries**
+*For any* reiterator operation with debug logging enabled, the system should generate appropriate log messages without exposing sensitive information
+**Validates: Requirements 11.5**
+
 ## Error Handling
 
 The SDK implements comprehensive error handling with custom exception classes:
@@ -206,6 +305,9 @@ The SDK implements comprehensive error handling with custom exception classes:
 - `TransactionBuildError`: Failures in transaction construction
 - `PaymentError`: Payment processing failures (insufficient funds, network issues)
 - `HumanVerificationError`: Human RPC API failures or timeouts
+- `ReiteratorConfigurationError`: Invalid reiterator configuration parameters
+- `ReiteratorMaxAttemptsError`: Maximum retry attempts reached without positive consensus
+- `ReiteratorRateLimitError`: Rate limiting violations during retry attempts
 
 All exceptions include descriptive messages and preserve original error context where appropriate.
 

@@ -16,18 +16,26 @@ from .exceptions import (
     InvoiceValidationError,
     TransactionBuildError,
     PaymentError,
-    HumanVerificationError
+    HumanVerificationError,
+    ReiteratorConfigurationError,
+    ReiteratorMaxAttemptsError,
+    ReiteratorRateLimitError
 )
+from .reiterator import ReiteratorManager
 
 __all__ = [
     "AutoAgent",
     "guard",
+    "ReiteratorManager",
     "SDKError",
     "SDKConfigurationError", 
     "InvoiceValidationError",
     "TransactionBuildError",
     "PaymentError",
-    "HumanVerificationError"
+    "HumanVerificationError",
+    "ReiteratorConfigurationError",
+    "ReiteratorMaxAttemptsError",
+    "ReiteratorRateLimitError"
 ]
 __version__ = "0.1.0"
 

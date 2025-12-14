@@ -16,6 +16,12 @@ The HumanRPC Python SDK provides developers with a seamless way to integrate hum
 - **Escrow_Account**: Solana account that receives payments for human verification services
 - **SPL_Token**: Solana Program Library token (e.g., USDC) used for payments
 - **Gateway_Stub**: Local test server that simulates 402 payment flow for integration testing
+- **Reiterator**: Optional SDK feature that automatically retries human-RPC tasks when consensus results are negative
+- **Negative_Consensus**: Human verification result indicating rejection or disapproval of the AI agent's output
+- **Positive_Consensus**: Human verification result indicating approval or acceptance of the AI agent's output
+- **Retry_Attempt**: Automatic resubmission of a human-RPC task triggered by reiterator functionality
+- **Backoff_Strategy**: Time delay mechanism between retry attempts to respect rate limits and avoid system overload
+- **Iteration_Count**: Number of retry attempts made by reiterator for a specific task
 
 ## Requirements
 
@@ -114,3 +120,39 @@ The HumanRPC Python SDK provides developers with a seamless way to integrate hum
 3. WHEN integration tests run THEN the system SHALL validate end-to-end payment flow using the gateway stub
 4. WHEN tests include Solana operations THEN the system SHALL use deterministic test keypairs to avoid randomness
 5. WHEN CI pipeline completes THEN the system SHALL report test results and build status clearly
+
+### Requirement 9
+
+**User Story:** As a developer, I want to enable automatic reiterator functionality in my agent, so that my agent can automatically retry human-RPC tasks when consensus results are negative.
+
+#### Acceptance Criteria
+
+1. WHEN initializing AutoAgent with reiterator enabled THEN the system SHALL accept a reiterator configuration parameter
+2. WHEN a human-RPC task completes with negative consensus THEN the system SHALL automatically trigger reiterator logic if enabled
+3. WHEN reiterator is triggered THEN the system SHALL respect rate limits and implement exponential backoff between retry attempts
+4. WHEN reiterator submits a retry THEN the system SHALL create a new task submission using the same parameters as the original request
+5. WHEN reiterator achieves positive consensus THEN the system SHALL return the successful result and stop retrying
+
+### Requirement 10
+
+**User Story:** As a developer, I want to configure and monitor reiterator behavior, so that I can control retry logic and track iteration progress.
+
+#### Acceptance Criteria
+
+1. WHEN reiterator is configured THEN the system SHALL accept parameters for maximum retry attempts and backoff strategy
+2. WHEN reiterator is active THEN the system SHALL provide methods to check reiterator status and current iteration count
+3. WHEN maximum retry attempts are reached THEN the system SHALL return the final negative result and disable further retries
+4. WHEN reiterator encounters API errors THEN the system SHALL handle failures gracefully and respect rate limiting
+5. WHEN reiterator is disabled dynamically THEN the system SHALL stop retry attempts for subsequent tasks while preserving ongoing iterations
+
+### Requirement 11
+
+**User Story:** As a developer, I want comprehensive documentation and examples for reiterator functionality, so that I can implement and troubleshoot the feature effectively.
+
+#### Acceptance Criteria
+
+1. WHEN developers access SDK documentation THEN the system SHALL provide clear examples of enabling reiterator during initialization
+2. WHEN developers review reiterator examples THEN the system SHALL demonstrate dynamic enabling/disabling and status monitoring
+3. WHEN developers read documentation THEN the system SHALL explain rate limiting behavior and recommended backoff strategies
+4. WHEN developers implement reiterator THEN the system SHALL provide warnings about potential costs and delays in achieving consensus
+5. WHEN developers troubleshoot reiterator THEN the system SHALL provide logging and debugging information for retry attempts

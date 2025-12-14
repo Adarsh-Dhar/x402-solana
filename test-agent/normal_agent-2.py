@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Normal Agent (Baseline) - Uses LLM to analyze text for sarcasm and slang.
-This baseline agent often fails on sarcasm detection.
+Normal Agent (Baseline) - Uses LLM to answer user questions.
+This baseline agent provides answers to user questions and uses Human RPC when confidence is low.
 Now integrated with HumanRPC SDK for automatic Human RPC when confidence is low.
 """
 
@@ -15,7 +15,10 @@ import google.generativeai as genai
 
 # Add SDK to path for importing
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'main-app', 'sdk', 'src'))
-from human_rpc_sdk import AutoAgent, guard, HumanVerificationError, SDKConfigurationError, PaymentError
+from human_rpc_sdk import (
+    AutoAgent, guard, HumanVerificationError, SDKConfigurationError, PaymentError,
+    ReiteratorMaxAttemptsError, ReiteratorRateLimitError, ReiteratorConfigurationError
+)
 
 # Load environment variables
 load_dotenv()
@@ -67,13 +70,18 @@ def calculate_consensus_params(ai_certainty: float) -> dict:
 agent = AutoAgent(
     network="devnet",  # Use devnet for testing, change to "mainnet-beta" for production
     timeout=30,  # Longer timeout for LLM processing
-    default_agent_name="SarcasmDetector-v1",  # Custom agent name
-    default_reward="0.4 USDC",  # Higher reward for sarcasm detection (complex task)
+    default_agent_name="QuestionAnswerer-v2",  # Custom agent name
+    default_reward="0.4 USDC",  # Higher reward for question answering (complex task)
     default_reward_amount=0.4,  # Matching float value
-    default_category="Sarcasm Detection",  # Specific category for this task
+    default_category="Question Answering",  # Specific category for this task
     default_escrow_amount="0.8 USDC",  # 2x reward as escrow (best practice)
     enable_session_management=True,  # Enable automatic session management
-    heartbeat_interval=60  # Send heartbeat every 60 seconds
+    heartbeat_interval=60,  # Send heartbeat every 60 seconds
+    # Reiterator configuration for automatic retry on negative consensus
+    reiterator=True,  # Enable automatic retry functionality
+    max_retry_attempts=3,  # Maximum number of retry attempts
+    backoff_strategy="exponential",  # Exponential backoff (1s, 2s, 4s...)
+    base_delay=1.0  # Base delay in seconds between retries
 )
 
 # Confidence threshold for triggering Human RPC
@@ -83,36 +91,36 @@ agent = AutoAgent(
 CONFIDENCE_THRESHOLD = 0.96
 
 
-def analyze_text(text: str) -> dict:
+def answer_question(text: str) -> dict:
     """
-    Analyze text for sentiment using LLM with manual human verification handling.
+    Answer user questions using LLM with manual human verification handling.
     This version allows us to start real-time polling immediately when Human RPC is triggered.
     
     For the minimal voters test case, we override the AI analysis to return high confidence (0.95)
     which will result in minimal voters (N=3) and low consensus threshold (51%).
     
     Args:
-        text: The text/query to analyze (user query)
+        text: The user's question
         
     Returns:
         Dictionary with required fields:
-        - userQuery: The original query/text
-        - agentConclusion: What the agent thinks (e.g., "POSITIVE" or "NEGATIVE")
-        - confidence: Confidence level (0.0-1.0)
-        - reasoning: Why the agent thinks that (explanation of the analysis)
+        - userQuery: The original question
+        - agentConclusion: The agent's answer to the question
+        - confidence: Confidence level (0.0-1.0) in the answer's correctness
+        - reasoning: Why the agent thinks this is the correct answer
         - human_verdict: (optional) Human verification result if confidence was low
     """
     # Special test case: Override for minimal voters scenario
-    if "clearly positive sentiment with obvious indicators" in text.lower():
+    if "what is the capital of france" in text.lower():
         print("🎯 SPECIAL TEST CASE DETECTED: Overriding AI analysis for minimal voters scenario")
         print("   • Setting confidence to 0.95 (high) to get minimal voters (N=3)")
-        print("   • But still below our threshold (0.80) to trigger Human RPC")
+        print("   • But still below our threshold (0.96) to trigger Human RPC")
         print("   • This creates the edge case: minimal voters but potential for no consensus")
         return {
             "userQuery": text,
-            "agentConclusion": "POSITIVE",
+            "agentConclusion": "Paris",
             "confidence": 0.95,  # High confidence = minimal voters (N=3, T=51%)
-            "reasoning": "Clear positive sentiment with obvious indicators. High confidence analysis for minimal voters test case."
+            "reasoning": "Paris is the well-known capital of France. High confidence answer for minimal voters test case."
         }
     
     # Get Google API key
@@ -125,21 +133,20 @@ def analyze_text(text: str) -> dict:
     genai.configure(api_key=google_api_key)
     
     # Build system prompt
-    system_prompt = """You are an expert at analyzing crypto-twitter slang and detecting sentiment.
-Analyze the given text and determine if it's POSITIVE or NEGATIVE sentiment.
-Pay special attention to sarcasm, irony, and crypto-twitter slang terms.
+    system_prompt = """You are a helpful AI assistant that answers user questions accurately and concisely.
+Provide a clear, informative answer to the user's question.
 
-IMPORTANT: Be conservative with confidence scores. If the text is ambiguous, unclear, or could be interpreted multiple ways, use a confidence score below 0.8. Only use high confidence (0.9+) for very clear, unambiguous sentiment.
+IMPORTANT: Be conservative with confidence scores. If the question is complex, ambiguous, or requires specialized knowledge you're uncertain about, use a confidence score below 0.8. Only use high confidence (0.9+) for questions you can answer with high certainty.
 
 Return ONLY valid JSON in this exact format:
 {
-  "sentiment": "POSITIVE" or "NEGATIVE",
+  "answer": "Your clear and concise answer to the question",
   "confidence": 0.0-1.0,
-  "reasoning": "A brief explanation of why you reached this conclusion, including any indicators of sarcasm, irony, or slang that influenced your decision"
+  "reasoning": "A brief explanation of why you believe this answer is correct and how confident you are in it"
 }"""
     
     # Build a single prompt string using system prompt + user message
-    prompt = f"{system_prompt}\n\nUSER: Analyze this text: {text}"
+    prompt = f"{system_prompt}\n\nUSER QUESTION: {text}"
     
     # Initialize the model (can be overridden with GEMINI_MODEL env var)
     model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -165,13 +172,13 @@ Return ONLY valid JSON in this exact format:
             result = json.loads(json_str)
             
             # Validate result structure
-            if 'sentiment' not in result or 'confidence' not in result or 'reasoning' not in result:
+            if 'answer' not in result or 'confidence' not in result or 'reasoning' not in result:
                 raise ValueError(f"Invalid response structure: {result}")
             
             # Return new structure with all 4 required fields
             return {
                 "userQuery": text,
-                "agentConclusion": result['sentiment'],
+                "agentConclusion": result['answer'],
                 "confidence": float(result['confidence']),
                 "reasoning": result['reasoning']
             }
@@ -180,7 +187,140 @@ Return ONLY valid JSON in this exact format:
             
     except Exception as e:
         print(f"⚠️  Error in Gemini API call: {e}")
-        raise ValueError(f"Failed to analyze text: {e}")
+        raise ValueError(f"Failed to answer question: {e}")
+
+
+def handle_human_rpc_with_reiterator_support(ai_result: dict) -> dict:
+    """
+    Handle Human RPC with custom reiterator logic for our API response format.
+    This implements manual retry logic since the SDK's reiterator doesn't recognize our API format.
+    """
+    confidence = ai_result.get("confidence", 1.0)
+    
+    # Show consensus parameters
+    consensus_params = calculate_consensus_params(confidence)
+    print()
+    print("🧮 THIS AGENT'S VOTING REQUIREMENTS:")
+    print(f"   🎯 AI Confidence: {confidence:.3f}")
+    print(f"   👥 Required Voters: {consensus_params['requiredVoters']}")
+    print(f"   📊 Consensus Threshold: {consensus_params['consensusThreshold'] * 100:.1f}%")
+    print(f"   🎲 Minimum Votes Needed: {int(consensus_params['requiredVoters'] * consensus_params['consensusThreshold']) + 1}")
+    
+    # Special messaging for minimal voters case
+    if confidence >= 0.95:
+        print()
+        print("🎯 MINIMAL VOTERS SCENARIO ACTIVE:")
+        print(f"   • High AI confidence ({confidence:.1%}) = Minimal voters ({consensus_params['requiredVoters']})")
+        print(f"   • Low consensus threshold ({consensus_params['consensusThreshold']:.1%})")
+        print("   • Even with minimal requirements, consensus may still fail!")
+        print("   • Example: 1 Yes, 2 No = 66.7% majority but no consensus decision")
+        print("   • This demonstrates the edge case where minimal voters ≠ guaranteed consensus")
+    
+    print()
+    print("⏳ Triggering Human RPC and starting real-time updates...")
+    print("🔄 CUSTOM REITERATOR ACTIVE: Will retry if humans reject the answer")
+    print("   • Negative consensus (consensus='no' or more NO votes) triggers retry")
+    print("   • Up to 3 attempts with exponential backoff (1s, 2s, 4s...)")
+    print("   • Each retry costs an additional 0.4 USDC")
+    
+    # Prepare context
+    context = {
+        "type": "ai_verification",
+        "summary": f"Verify AI answer from answer_question. Confidence: {confidence:.3f}. REITERATOR TEST CASE.",
+        "data": {
+            "userQuery": ai_result["userQuery"],
+            "agentConclusion": ai_result["agentConclusion"],
+            "confidence": confidence,
+            "reasoning": ai_result["reasoning"],
+            "testCase": "reiterator_test_case"
+        }
+    }
+    
+    max_attempts = 3
+    base_delay = 1.0
+    
+    for attempt in range(max_attempts):
+        try:
+            print(f"\n🔄 Attempt {attempt + 1}/{max_attempts}")
+            
+            # Temporarily disable SDK reiterator to handle manually
+            original_reiterator_enabled = agent.reiterator_enabled
+            agent.disable_reiterator()
+            
+            try:
+                # Call Human RPC
+                human_result = agent.ask_human_rpc(
+                    text=ai_result["userQuery"],
+                    agentName="QuestionAnswerer-v2",
+                    reward="0.4 USDC",
+                    rewardAmount=0.4,
+                    category="Question Answering",
+                    escrowAmount="0.8 USDC",
+                    context=context
+                )
+            finally:
+                # Restore original reiterator state
+                if original_reiterator_enabled:
+                    agent.enable_reiterator()
+            
+            if not human_result:
+                print("❌ No result received")
+                continue
+            
+            # Check if we should retry based on our API response format
+            result_data = human_result.get("result", {})
+            consensus = result_data.get("consensus", "unknown")
+            final_votes = result_data.get("finalVotes", {})
+            yes_votes = final_votes.get("yes", 0)
+            no_votes = final_votes.get("no", 0)
+            
+            print(f"📊 Voting Results: {yes_votes} YES, {no_votes} NO")
+            print(f"🎯 Consensus: {consensus}")
+            
+            # Determine if this is a negative result that should trigger retry
+            should_retry = (
+                consensus == "no" or  # API says no consensus
+                no_votes > yes_votes or  # More rejections than approvals
+                (yes_votes == 0 and no_votes > 0)  # All rejections
+            )
+            
+            if not should_retry or attempt == max_attempts - 1:
+                # Either positive result or final attempt
+                if should_retry:
+                    print("❌ FINAL ATTEMPT: No more retries available")
+                    print("🚫 Humans consistently rejected the AI's answer")
+                else:
+                    print("✅ Positive consensus achieved!")
+                
+                print("\n✅ Human RPC completed!")
+                # Combine AI result with human verdict
+                combined_result = ai_result.copy()
+                combined_result["human_verdict"] = human_result
+                return combined_result
+            
+            # Negative result - prepare for retry
+            print(f"🔄 Negative consensus detected - preparing retry...")
+            
+            if attempt < max_attempts - 1:
+                # Calculate exponential backoff delay
+                delay = base_delay * (2 ** attempt)
+                print(f"⏱️  Waiting {delay:.1f}s before retry...")
+                time.sleep(delay)
+            
+        except Exception as e:
+            print(f"❌ Attempt {attempt + 1} failed: {e}")
+            if attempt == max_attempts - 1:
+                print("🚫 All retry attempts exhausted")
+                raise
+            
+            # Wait before retry on error
+            delay = base_delay * (2 ** attempt)
+            print(f"⏱️  Waiting {delay:.1f}s before retry...")
+            time.sleep(delay)
+    
+    # This should not be reached
+    print("❌ Unexpected end of retry loop")
+    return ai_result
 
 
 def handle_human_rpc_with_realtime_polling(ai_result: dict) -> dict:
@@ -215,11 +355,15 @@ def handle_human_rpc_with_realtime_polling(ai_result: dict) -> dict:
     
     print()
     print("⏳ Triggering Human RPC and starting real-time updates...")
+    print("🔄 REITERATOR ACTIVE: Will automatically retry if humans reject the answer")
+    print("   • Negative consensus triggers automatic retry")
+    print("   • Up to 3 attempts with exponential backoff (1s, 2s, 4s...)")
+    print("   • Each retry costs an additional 0.4 USDC")
     
     # Prepare context
     context = {
         "type": "ai_verification",
-        "summary": f"Verify AI analysis from analyze_text. Confidence: {confidence:.3f}. MINIMAL VOTERS TEST CASE.",
+        "summary": f"Verify AI answer from answer_question. Confidence: {confidence:.3f}. MINIMAL VOTERS TEST CASE.",
         "data": {
             "userQuery": ai_result["userQuery"],
             "agentConclusion": ai_result["agentConclusion"],
@@ -233,10 +377,10 @@ def handle_human_rpc_with_realtime_polling(ai_result: dict) -> dict:
         # Call Human RPC - the SDK handles task creation and polling internally
         human_result = agent.ask_human_rpc(
             text=ai_result["userQuery"],
-            agentName="SarcasmDetector-v1",
+            agentName="QuestionAnswerer-v2",
             reward="0.4 USDC",
             rewardAmount=0.4,
-            category="Sarcasm Detection",
+            category="Question Answering",
             escrowAmount="0.8 USDC",
             context=context
         )
@@ -381,11 +525,11 @@ def poll_task_progress_continuous(task_id: str, max_duration_minutes: int = 10) 
 def main():
     """Main function to run the normal agent with integrated Human RPC support."""
     print("=" * 60)
-    print("Normal Agent (Baseline) - Sarcasm & Slang Detector")
+    print("Normal Agent (Baseline) - Question Answering Assistant")
     print("Integrated with HumanRPC SDK for automatic Human RPC")
     print("=" * 60)
     print()
-    print("This agent uses AI for initial analysis, then calls Human RPC")
+    print("This agent uses AI to answer questions, then calls Human RPC")
     print(f"when confidence is below the threshold ({CONFIDENCE_THRESHOLD}).")
     print("The @guard decorator automatically handles the confidence check and Human RPC calls.")
     print()
@@ -401,29 +545,47 @@ def main():
     print("   • But voting pattern prevents consensus from being reached")
     print("   • Demonstrates edge case where even minimal requirements fail")
     print()
+    print("🔄 REITERATOR FUNCTIONALITY:")
+    print("   • Automatic retry enabled when humans reject AI's answer")
+    print("   • Will retry up to 3 times with exponential backoff")
+    print("   • Continues until positive consensus or max attempts reached")
+    print("   • Each retry incurs additional costs (0.4 USDC per attempt)")
+    print()
 
     
     # Test input designed to have HIGH confidence (0.95) to get minimal voters (N=3)
-    # but still trigger human verification due to our threshold being 0.80
-    test_text = "This is clearly positive sentiment with obvious indicators."
+    # but still trigger human verification due to our threshold being 0.96
+    test_text = "What is the capital of France?"
     
-    print(f"📝 Analyzing text: \"{test_text}\"")
+    print(f"❓ Answering question: \"{test_text}\"")
     print()
     
     try:
         # Step 1: Run AI analysis
-        ai_result = analyze_text(test_text)
+        ai_result = answer_question(test_text)
         confidence = ai_result.get("confidence", 1.0)
         
         # Step 2: Check if Human RPC is needed and handle it with real-time polling
         if confidence < CONFIDENCE_THRESHOLD:
-            result = handle_human_rpc_with_realtime_polling(ai_result)
+            # Show initial reiterator status
+            reiterator_status = agent.get_reiterator_status()
+            print(f"🔄 Reiterator Status Before Task:")
+            print(f"   Session Retries So Far: {reiterator_status.get('total_retries_session', 0)}")
+            
+            result = handle_human_rpc_with_reiterator_support(ai_result)
+            
+            # Show final reiterator status
+            final_reiterator_status = agent.get_reiterator_status()
+            print(f"\n🔄 Reiterator Status After Task:")
+            print(f"   Total Session Retries: {final_reiterator_status.get('total_retries_session', 0)}")
+            retries_this_task = final_reiterator_status.get('total_retries_session', 0) - reiterator_status.get('total_retries_session', 0)
+            print(f"   Retries This Task: {retries_this_task}")
         else:
             result = ai_result
         
         print()
         print("=" * 60)
-        print("📋 Final Analysis Summary")
+        print("📋 Final Answer Summary")
         print("=" * 60)
         print(json.dumps(result, indent=2))
         print()
@@ -435,7 +597,7 @@ def main():
         confidence = result.get("confidence", 1.0)
         
         # Show analysis results
-        print(f"🤖 AI Analysis: {conclusion} (confidence: {confidence:.2f})")
+        print(f"🤖 AI Answer: {conclusion} (confidence: {confidence:.2f})")
         
         # Show final results
         if confidence < CONFIDENCE_THRESHOLD:
@@ -449,22 +611,53 @@ def main():
         # Show final results
         has_human_verdict = "human_verdict" in result
         if has_human_verdict:
-            human_decision = result.get("human_verdict", {}).get("decision", "unknown")
-            consensus_reached = result.get("human_verdict", {}).get("consensusReached", False)
+            human_verdict = result.get("human_verdict", {})
+            human_decision = human_verdict.get("decision", "unknown")
+            consensus_reached = human_verdict.get("result", {}).get("consensus", "no") == "yes"
+            final_votes = human_verdict.get("result", {}).get("finalVotes", {})
+            yes_votes = final_votes.get("yes", 0)
+            no_votes = final_votes.get("no", 0)
+            
+            print(f"   👤 Human Voting Results: {yes_votes} YES, {no_votes} NO")
             print(f"   👤 Final human verdict: {human_decision}")
+            
             if not consensus_reached:
                 print("   ⚠️  NO CONSENSUS REACHED - This demonstrates the minimal voters edge case!")
-                print("   📊 Even with minimal voters (N=3), consensus can still fail")
+                print("   📊 Even with minimal voters, consensus can still fail")
+                if no_votes > yes_votes:
+                    print("   🚫 Majority of humans REJECTED the AI's answer")
         
         print()
-        print("📋 FINAL ANALYSIS:")
-        final_conclusion = result.get("agentConclusion", "UNKNOWN")
-        final_confidence = result.get("confidence", 1.0)
-        print(f"   🎯 Conclusion: {final_conclusion}")
-        print(f"   📊 Confidence: {final_confidence:.3f}")
+        print("📋 FINAL ANSWER:")
+        
+        # Determine the final answer based on human verdict
         if has_human_verdict:
-            consensus_reached = result.get("human_verdict", {}).get("consensusReached", False)
-            print(f"   👤 Hu")
+            human_verdict = result.get("human_verdict", {})
+            human_decision = human_verdict.get("decision", "unknown")
+            consensus_reached = human_verdict.get("result", {}).get("consensus", "no") == "yes"
+            
+            if consensus_reached and human_decision != "unknown":
+                # Humans reached consensus and provided a clear decision
+                final_answer = f"Human-verified: {human_decision}"
+                print(f"   🎯 Answer: {final_answer}")
+                print(f"   👤 Human Consensus: YES ({human_decision})")
+            else:
+                # No consensus or unclear decision
+                final_answer = result.get("agentConclusion", "UNKNOWN")
+                final_votes = human_verdict.get("result", {}).get("finalVotes", {})
+                yes_votes = final_votes.get("yes", 0)
+                no_votes = final_votes.get("no", 0)
+                
+                print(f"   🎯 AI Answer: {final_answer}")
+                print(f"   ❌ Human Consensus: NO ({no_votes} reject, {yes_votes} accept)")
+                print(f"   ⚠️  Final Status: DISPUTED - No human consensus reached")
+        else:
+            # No human verification
+            final_answer = result.get("agentConclusion", "UNKNOWN")
+            print(f"   🎯 Answer: {final_answer}")
+        
+        final_confidence = result.get("confidence", 1.0)
+        print(f"   📊 AI Confidence: {final_confidence:.3f}")
         
         # Show payment information if human verification occurred
         if has_human_verdict:
@@ -473,8 +666,20 @@ def main():
             print(f"   Reward: 0.4 USDC")
             print(f"   Escrow: 0.8 USDC")
             print(f"   Network: devnet")
-            print(f"   Agent: SarcasmDetector-v1")
+            print(f"   Agent: QuestionAnswerer-v2")
             
+    except ReiteratorMaxAttemptsError as e:
+        print(f"❌ Reiterator Max Attempts Reached: {e}")
+        print("   All retry attempts have been exhausted.")
+        print("   The humans consistently rejected the AI's answer.")
+        reiterator_status = agent.get_reiterator_status()
+        print(f"   Total attempts made: {reiterator_status.get('total_retries_session', 0) + 1}")
+    except ReiteratorRateLimitError as e:
+        print(f"❌ Reiterator Rate Limit Error: {e}")
+        print("   Rate limiting encountered during retry attempts.")
+    except ReiteratorConfigurationError as e:
+        print(f"❌ Reiterator Configuration Error: {e}")
+        print("   Check your reiterator configuration parameters.")
     except SDKConfigurationError as e:
         print(f"❌ SDK Configuration Error: {e}")
         print("   Check your SOLANA_PRIVATE_KEY and other configuration.")
@@ -486,7 +691,7 @@ def main():
         print(f"❌ Human verification failed: {e}")
         print("   This could be due to network issues or Human RPC API problems.")
     except Exception as e:
-        print(f"❌ Unexpected error during analysis: {e}")
+        print(f"❌ Unexpected error during question answering: {e}")
         import traceback
         traceback.print_exc()
 
@@ -518,6 +723,14 @@ if __name__ == "__main__":
     print(f"   Escrow: {agent.default_escrow_amount}")
     print(f"   Confidence Threshold: {CONFIDENCE_THRESHOLD}")
     print(f"   Wallet: {agent.wallet.get_public_key()}")
+    
+    # Show reiterator status
+    reiterator_status = agent.get_reiterator_status()
+    print(f"   🔄 Reiterator: {'Enabled' if reiterator_status['enabled'] else 'Disabled'}")
+    if reiterator_status['enabled']:
+        print(f"   📊 Max Attempts: {reiterator_status.get('max_attempts', 'N/A')}")
+        print(f"   ⏱️  Backoff Strategy: {reiterator_status.get('backoff_strategy', 'N/A')}")
+        print(f"   🕐 Base Delay: {reiterator_status.get('base_delay', 'N/A')}s")
     print()
     
     main()
