@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Normal Agent (Baseline) - Uses LLM to analyze text for sarcasm and slang.
-This baseline agent often fails on sarcasm detection.
+Normal Agent (Baseline) - Uses LLM to answer user questions.
+This baseline agent provides answers to user questions and uses Human RPC when confidence is low.
 Now integrated with HumanRPC SDK for automatic Human RPC when confidence is low.
 """
 
@@ -67,10 +67,10 @@ def calculate_consensus_params(ai_certainty: float) -> dict:
 agent = AutoAgent(
     network="devnet",  # Use devnet for testing, change to "mainnet-beta" for production
     timeout=30,  # Longer timeout for LLM processing
-    default_agent_name="SarcasmDetector-v1",  # Custom agent name
-    default_reward="0.4 USDC",  # Higher reward for sarcasm detection (complex task)
+    default_agent_name="QuestionAnswerer-v1",  # Custom agent name
+    default_reward="0.4 USDC",  # Higher reward for question answering (complex task)
     default_reward_amount=0.4,  # Matching float value
-    default_category="Sarcasm Detection",  # Specific category for this task
+    default_category="Question Answering",  # Specific category for this task
     default_escrow_amount="0.8 USDC",  # 2x reward as escrow (best practice)
     enable_session_management=True,  # Enable automatic session management
     heartbeat_interval=60  # Send heartbeat every 60 seconds
@@ -80,20 +80,20 @@ agent = AutoAgent(
 CONFIDENCE_THRESHOLD = 0.80
 
 
-def analyze_text(text: str) -> dict:
+def answer_question(text: str) -> dict:
     """
-    Analyze text for sentiment using LLM with manual human verification handling.
+    Answer user questions using LLM with manual human verification handling.
     This version allows us to start real-time polling immediately when Human RPC is triggered.
     
     Args:
-        text: The text/query to analyze (user query)
+        text: The user's question
         
     Returns:
         Dictionary with required fields:
-        - userQuery: The original query/text
-        - agentConclusion: What the agent thinks (e.g., "POSITIVE" or "NEGATIVE")
-        - confidence: Confidence level (0.0-1.0)
-        - reasoning: Why the agent thinks that (explanation of the analysis)
+        - userQuery: The original question
+        - agentConclusion: The agent's answer to the question
+        - confidence: Confidence level (0.0-1.0) in the answer's correctness
+        - reasoning: Why the agent thinks this is the correct answer
         - human_verdict: (optional) Human verification result if confidence was low
     """
     # Get Google API key
@@ -106,21 +106,20 @@ def analyze_text(text: str) -> dict:
     genai.configure(api_key=google_api_key)
     
     # Build system prompt
-    system_prompt = """You are an expert at analyzing crypto-twitter slang and detecting sentiment.
-Analyze the given text and determine if it's POSITIVE or NEGATIVE sentiment.
-Pay special attention to sarcasm, irony, and crypto-twitter slang terms.
+    system_prompt = """You are a helpful AI assistant that answers user questions accurately and concisely.
+Provide a clear, informative answer to the user's question.
 
-IMPORTANT: Be conservative with confidence scores. If the text is ambiguous, unclear, or could be interpreted multiple ways, use a confidence score below 0.8. Only use high confidence (0.9+) for very clear, unambiguous sentiment.
+IMPORTANT: Be conservative with confidence scores. If the question is complex, ambiguous, or requires specialized knowledge you're uncertain about, use a confidence score below 0.8. Only use high confidence (0.9+) for questions you can answer with high certainty.
 
 Return ONLY valid JSON in this exact format:
 {
-  "sentiment": "POSITIVE" or "NEGATIVE",
+  "answer": "Your clear and concise answer to the question",
   "confidence": 0.0-1.0,
-  "reasoning": "A brief explanation of why you reached this conclusion, including any indicators of sarcasm, irony, or slang that influenced your decision"
+  "reasoning": "A brief explanation of why you believe this answer is correct and how confident you are in it"
 }"""
     
     # Build a single prompt string using system prompt + user message
-    prompt = f"{system_prompt}\n\nUSER: Analyze this text: {text}"
+    prompt = f"{system_prompt}\n\nUSER QUESTION: {text}"
     
     # Initialize the model (can be overridden with GEMINI_MODEL env var)
     model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -146,13 +145,13 @@ Return ONLY valid JSON in this exact format:
             result = json.loads(json_str)
             
             # Validate result structure
-            if 'sentiment' not in result or 'confidence' not in result or 'reasoning' not in result:
+            if 'answer' not in result or 'confidence' not in result or 'reasoning' not in result:
                 raise ValueError(f"Invalid response structure: {result}")
             
             # Return new structure with all 4 required fields
             return {
                 "userQuery": text,
-                "agentConclusion": result['sentiment'],
+                "agentConclusion": result['answer'],
                 "confidence": float(result['confidence']),
                 "reasoning": result['reasoning']
             }
@@ -161,7 +160,7 @@ Return ONLY valid JSON in this exact format:
             
     except Exception as e:
         print(f"⚠️  Error in Gemini API call: {e}")
-        raise ValueError(f"Failed to analyze text: {e}")
+        raise ValueError(f"Failed to answer question: {e}")
 
 
 def handle_human_rpc_with_realtime_polling(ai_result: dict) -> dict:
@@ -185,7 +184,7 @@ def handle_human_rpc_with_realtime_polling(ai_result: dict) -> dict:
     # Prepare context
     context = {
         "type": "ai_verification",
-        "summary": f"Verify AI analysis from analyze_text. Confidence: {confidence:.3f}",
+        "summary": f"Verify AI answer from answer_question. Confidence: {confidence:.3f}",
         "data": {
             "userQuery": ai_result["userQuery"],
             "agentConclusion": ai_result["agentConclusion"],
@@ -198,10 +197,10 @@ def handle_human_rpc_with_realtime_polling(ai_result: dict) -> dict:
         # Call Human RPC - the SDK handles task creation and polling internally
         human_result = agent.ask_human_rpc(
             text=ai_result["userQuery"],
-            agentName="SarcasmDetector-v1",
+            agentName="QuestionAnswerer-v1",
             reward="0.4 USDC",
             rewardAmount=0.4,
-            category="Sarcasm Detection",
+            category="Question Answering",
             escrowAmount="0.8 USDC",
             context=context
         )
@@ -346,11 +345,11 @@ def poll_task_progress_continuous(task_id: str, max_duration_minutes: int = 10) 
 def main():
     """Main function to run the normal agent with integrated Human RPC support."""
     print("=" * 60)
-    print("Normal Agent (Baseline) - Sarcasm & Slang Detector")
+    print("Normal Agent (Baseline) - Question Answering Assistant")
     print("Integrated with HumanRPC SDK for automatic Human RPC")
     print("=" * 60)
     print()
-    print("This agent uses AI for initial analysis, then calls Human RPC")
+    print("This agent uses AI to answer questions, then calls Human RPC")
     print(f"when confidence is below the threshold ({CONFIDENCE_THRESHOLD}).")
     print("The @guard decorator automatically handles the confidence check and Human RPC calls.")
     print()
@@ -363,14 +362,14 @@ def main():
 
     
     # Test input designed to have moderate confidence (0.7-0.75) to trigger human verification
-    test_text = "Not sure about this one."
+    test_text = "What will be the price of Bitcoin in 2025?"
     
-    print(f"📝 Analyzing text: \"{test_text}\"")
+    print(f"❓ Answering question: \"{test_text}\"")
     print()
     
     try:
         # Step 1: Run AI analysis
-        ai_result = analyze_text(test_text)
+        ai_result = answer_question(test_text)
         confidence = ai_result.get("confidence", 1.0)
         
         # Step 2: Check if Human RPC is needed and handle it with real-time polling
@@ -381,7 +380,7 @@ def main():
         
         print()
         print("=" * 60)
-        print("📋 Final Analysis Summary")
+        print("📋 Final Answer Summary")
         print("=" * 60)
         print(json.dumps(result, indent=2))
         print()
@@ -393,7 +392,7 @@ def main():
         confidence = result.get("confidence", 1.0)
         
         # Show analysis results
-        print(f"🤖 AI Analysis: {conclusion} (confidence: {confidence:.2f})")
+        print(f"🤖 AI Answer: {conclusion} (confidence: {confidence:.2f})")
         
         # Show final results
         if confidence < CONFIDENCE_THRESHOLD:
@@ -408,10 +407,10 @@ def main():
             print(f"   👤 Final human verdict: {human_decision}")
         
         print()
-        print("📋 FINAL ANALYSIS:")
-        final_conclusion = result.get("agentConclusion", "UNKNOWN")
+        print("📋 FINAL ANSWER:")
+        final_answer = result.get("agentConclusion", "UNKNOWN")
         final_confidence = result.get("confidence", 1.0)
-        print(f"   🎯 Conclusion: {final_conclusion}")
+        print(f"   🎯 Answer: {final_answer}")
         print(f"   📊 Confidence: {final_confidence:.3f}")
         if has_human_verdict:
             print(f"   👤 Human Verified: Yes")
@@ -423,7 +422,7 @@ def main():
             print(f"   Reward: 0.4 USDC")
             print(f"   Escrow: 0.8 USDC")
             print(f"   Network: devnet")
-            print(f"   Agent: SarcasmDetector-v1")
+            print(f"   Agent: QuestionAnswerer-v1")
             
     except SDKConfigurationError as e:
         print(f"❌ SDK Configuration Error: {e}")
@@ -436,7 +435,7 @@ def main():
         print(f"❌ Human verification failed: {e}")
         print("   This could be due to network issues or Human RPC API problems.")
     except Exception as e:
-        print(f"❌ Unexpected error during analysis: {e}")
+        print(f"❌ Unexpected error during question answering: {e}")
         import traceback
         traceback.print_exc()
 
