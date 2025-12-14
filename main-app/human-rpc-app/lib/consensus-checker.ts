@@ -4,7 +4,12 @@
  * Determines if a task has reached consensus based on:
  * - Number of votes received (must be >= requiredVoters)
  * - Majority percentage (must be >= consensusThreshold)
+ * 
+ * Extended to support multi-phase voting operations while maintaining
+ * backward compatibility with single-phase voting.
  */
+
+import type { VotingPhase } from "./multi-phase-voting/types"
 
 export interface ConsensusResult {
   reached: boolean
@@ -15,6 +20,19 @@ export interface ConsensusResult {
   consensusThreshold: number
   yesVotes: number
   noVotes: number
+  // Multi-phase specific fields
+  phase?: VotingPhase
+  phaseDescription?: string
+}
+
+/**
+ * Extended consensus result for multi-phase operations
+ */
+export interface MultiPhaseConsensusResult extends ConsensusResult {
+  phase: VotingPhase
+  phaseDescription: string
+  shouldTransition: boolean
+  nextPhase?: VotingPhase | null
 }
 
 /**
@@ -97,13 +115,66 @@ export function checkConsensus(
 }
 
 /**
- * Get consensus status message
+ * Check consensus for multi-phase voting tasks
+ * Maintains the same consensus logic but adds phase-aware information
+ */
+export function checkMultiPhaseConsensus(
+  yesVotes: number,
+  noVotes: number,
+  requiredVoters: number,
+  consensusThreshold: number,
+  currentPhase: VotingPhase
+): MultiPhaseConsensusResult {
+  // Use the existing consensus logic
+  const baseResult = checkConsensus(yesVotes, noVotes, requiredVoters, consensusThreshold)
+  
+  // Import phase utilities dynamically to avoid circular dependencies
+  const { getNextPhase, getPhaseDescription } = require("./multi-phase-voting/types")
+  
+  const phaseDescription = getPhaseDescription(currentPhase)
+  const nextPhase = getNextPhase(currentPhase)
+  
+  // Determine if we should transition to next phase
+  const shouldTransition = !baseResult.reached && 
+                          baseResult.currentVoteCount >= requiredVoters &&
+                          nextPhase !== null
+  
+  return {
+    ...baseResult,
+    phase: currentPhase,
+    phaseDescription: phaseDescription,
+    shouldTransition: shouldTransition,
+    nextPhase: shouldTransition ? nextPhase : null
+  }
+}
+
+/**
+ * Check if consensus threshold consistency is maintained across phases
+ * This ensures the same consensus rules apply to all phases
+ */
+export function validateConsensusThresholdConsistency(
+  phase1Threshold: number,
+  phase2Threshold: number,
+  phase3Threshold: number
+): boolean {
+  // All thresholds should be identical for consistency
+  return phase1Threshold === phase2Threshold && 
+         phase2Threshold === phase3Threshold &&
+         phase1Threshold >= 0.51 && 
+         phase1Threshold <= 0.90
+}
+
+/**
+ * Get consensus status message with multi-phase support
  */
 export function getConsensusStatusMessage(result: ConsensusResult): string {
   const minVotesForConsensus = Math.ceil(result.requiredVoters * result.consensusThreshold)
   
+  // Add phase information if available
+  const phasePrefix = result.phaseDescription ? `[${result.phaseDescription}] ` : ""
+  
   if (result.reached) {
-    return `Consensus reached: ${result.decision?.toUpperCase()} with ${(result.majorityPercentage * 100).toFixed(1)}% agreement`
+    return `${phasePrefix}Consensus reached: ${result.decision?.toUpperCase()} with ${(result.majorityPercentage * 100).toFixed(1)}% agreement`
   }
   
   if (result.currentVoteCount < result.requiredVoters) {
@@ -111,14 +182,33 @@ export function getConsensusStatusMessage(result: ConsensusResult): string {
     const noNeeded = Math.max(0, minVotesForConsensus - result.noVotes)
     
     if (yesNeeded === 0) {
-      return `YES can win with next ${yesNeeded} votes`
+      return `${phasePrefix}YES can win with next ${yesNeeded} votes`
     } else if (noNeeded === 0) {
-      return `NO can win with next ${noNeeded} votes`
+      return `${phasePrefix}NO can win with next ${noNeeded} votes`
     } else {
-      return `Waiting for votes: ${result.currentVoteCount}/${result.requiredVoters} (need ${Math.min(yesNeeded, noNeeded)} more for consensus)`
+      return `${phasePrefix}Waiting for votes: ${result.currentVoteCount}/${result.requiredVoters} (need ${Math.min(yesNeeded, noNeeded)} more for consensus)`
     }
   }
   
-  return `No consensus: ${(result.majorityPercentage * 100).toFixed(1)}% majority (needs ${(result.consensusThreshold * 100).toFixed(1)}%)`
+  return `${phasePrefix}No consensus: ${(result.majorityPercentage * 100).toFixed(1)}% majority (needs ${(result.consensusThreshold * 100).toFixed(1)}%)`
+}
+
+/**
+ * Get multi-phase specific status message
+ */
+export function getMultiPhaseStatusMessage(result: MultiPhaseConsensusResult): string {
+  const baseMessage = getConsensusStatusMessage(result)
+  
+  if (result.shouldTransition && result.nextPhase) {
+    const { getPhaseDescription } = require("./multi-phase-voting/types")
+    const nextPhaseDescription = getPhaseDescription(result.nextPhase)
+    return `${baseMessage} - Will transition to ${nextPhaseDescription}`
+  }
+  
+  if (!result.reached && !result.shouldTransition && result.nextPhase === null) {
+    return `${baseMessage} - No more phases available, voting will terminate`
+  }
+  
+  return baseMessage
 }
 

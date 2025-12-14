@@ -60,13 +60,18 @@ export async function GET(
       )
     }
 
-    // Return task with status, result, and consensus information
+    // Return task with status, result, and consensus information including phase data
     const yesVotes = task.yesVotes || 0
     const noVotes = task.noVotes || 0
     const currentVoteCount = task.currentVoteCount || 0
     const requiredVoters = task.requiredVoters || 3
     const consensusThreshold = task.consensusThreshold ? parseFloat(task.consensusThreshold.toString()) : 0.51
     const aiCertainty = task.aiCertainty ? parseFloat(task.aiCertainty.toString()) : null
+    const currentPhase = task.currentPhase || 1
+
+    // Import phase utilities for description
+    const { getPhaseDescription } = await import("@/lib/multi-phase-voting/types")
+    const phaseDescription = getPhaseDescription(currentPhase)
 
     return NextResponse.json(
       {
@@ -85,6 +90,9 @@ export async function GET(
           currentVoteCount,
           yesVotes,
           noVotes,
+          phase: currentPhase,
+          phaseDescription: phaseDescription,
+          phaseMeta: task.phaseMeta,
         },
       },
       {
@@ -219,37 +227,63 @@ export async function PATCH(
       },
     })
 
-    // Check for consensus
+    // Check for consensus using multi-phase logic
     const requiredVoters = task.requiredVoters || 3
     const consensusThreshold = task.consensusThreshold ? parseFloat(task.consensusThreshold.toString()) : 0.51
+    const currentPhase = task.currentPhase || 1
+
+    // Import multi-phase voting components
+    const { checkMultiPhaseConsensus } = await import("@/lib/consensus-checker")
+    const { phaseManager } = await import("@/lib/multi-phase-voting/phase-manager")
+    const multiPhaseTypes = await import("@/lib/multi-phase-voting/types")
+    const VotingPhase = multiPhaseTypes.VotingPhase
+
+    // Check consensus for current phase
+    const consensusResult = checkMultiPhaseConsensus(
+      newYesVotes,
+      newNoVotes,
+      requiredVoters,
+      consensusThreshold,
+      currentPhase
+    )
 
     let newStatus = task.status
     let result = task.result
+    let phaseTransitioned = false
 
-    if (newVoteCount >= requiredVoters) {
-      const yesPercentage = newYesVotes / newVoteCount
-      const noPercentage = newNoVotes / newVoteCount
-
-      if (yesPercentage >= consensusThreshold) {
-        newStatus = "completed"
-        result = {
-          ...result,
-          consensus: "yes",
-          finalVotes: { yes: newYesVotes, no: newNoVotes },
-          completedAt: new Date().toISOString(),
-        }
-      } else if (noPercentage >= consensusThreshold) {
-        newStatus = "completed"
-        result = {
-          ...result,
-          consensus: "no",
-          finalVotes: { yes: newYesVotes, no: newNoVotes },
-          completedAt: new Date().toISOString(),
-        }
+    if (consensusResult.reached) {
+      // Consensus reached - complete the task
+      newStatus = "completed"
+      result = {
+        ...result,
+        consensus: consensusResult.decision,
+        finalVotes: { yes: newYesVotes, no: newNoVotes },
+        finalPhase: currentPhase,
+        completedAt: new Date().toISOString(),
+      }
+    } else if (consensusResult.shouldTransition) {
+      // No consensus but should transition to next phase
+      try {
+        phaseTransitioned = await phaseManager.transitionToNextPhase(resolvedParams.taskId)
+        console.log(`[Task API] Phase transition result: ${phaseTransitioned}`)
+      } catch (error) {
+        console.error("[Task API] Error during phase transition:", error)
+        // Continue with single-phase logic if phase transition fails
+      }
+    } else if (newVoteCount >= requiredVoters && !consensusResult.nextPhase) {
+      // All votes collected, no consensus, and no next phase available - task fails
+      newStatus = "failed"
+      result = {
+        ...result,
+        consensus: "failed",
+        reason: "No consensus reached after all phases",
+        finalVotes: { yes: newYesVotes, no: newNoVotes },
+        finalPhase: currentPhase,
+        completedAt: new Date().toISOString(),
       }
     }
 
-    // Update task status if consensus reached
+    // Update task status if consensus reached or failed
     if (newStatus !== task.status) {
       await taskModel.update({
         where: { id: resolvedParams.taskId },
@@ -260,6 +294,13 @@ export async function PATCH(
       })
     }
 
+    // Get updated task information after potential phase transition
+    const updatedTask = await taskModel.findUnique({
+      where: { id: resolvedParams.taskId },
+    })
+
+    const finalCurrentPhase = updatedTask?.currentPhase || currentPhase
+
     return NextResponse.json(
       {
         success: true,
@@ -267,6 +308,7 @@ export async function PATCH(
         requiredVoters,
         consensusReached: newStatus === "completed",
         status: newStatus,
+        phaseTransitioned: phaseTransitioned,
         consensus: {
           aiCertainty: task.aiCertainty ? parseFloat(task.aiCertainty.toString()) : null,
           requiredVoters,
@@ -275,6 +317,10 @@ export async function PATCH(
           yesVotes: newYesVotes,
           noVotes: newNoVotes,
           reached: newStatus === "completed",
+          phase: finalCurrentPhase,
+          phaseDescription: consensusResult.phaseDescription,
+          shouldTransition: consensusResult.shouldTransition,
+          nextPhase: consensusResult.nextPhase,
         },
       },
       { status: 200 }

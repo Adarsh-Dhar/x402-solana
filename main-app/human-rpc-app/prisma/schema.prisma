@@ -35,6 +35,7 @@ model User {
   votes               Vote[]
   notifications       Notification[]
   voteAccuracies      VoteAccuracy[]
+  voterEligibilities  VoterEligibility[]
   agents              Agent[]
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
@@ -66,10 +67,13 @@ model Task {
   agentSession      AgentSession? @relation(fields: [agentSessionId], references: [id], onDelete: Cascade)
   votes             Vote[]
   voteAccuracies    VoteAccuracy[]
+  phaseTransitions  PhaseTransition[]
+  voterEligibilities VoterEligibility[]
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   @@index([agentSessionId])
+  @@index([currentPhase])
 }
 
 model Vote {
@@ -187,4 +191,34 @@ model AgentSession {
   @@index([agentName, status])
   @@index([walletAddress, status])
   @@index([lastHeartbeat])
+}
+
+model PhaseTransition {
+  id          String   @id @default(cuid())
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  fromPhase   Int
+  toPhase     Int?
+  reason      String
+  voterCount  Int
+  timestamp   DateTime @default(now())
+
+  @@index([taskId])
+  @@index([timestamp])
+}
+
+model VoterEligibility {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phase     Int
+  eligible  Boolean
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@index([taskId, phase])
+  @@index([userId, phase])
+  @@unique([taskId, userId, phase])
 }
