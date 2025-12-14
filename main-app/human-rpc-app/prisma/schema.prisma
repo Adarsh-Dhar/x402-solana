@@ -62,10 +62,14 @@ model Task {
   noVotes           Int      @default(0)
   currentPhase      Int      @default(1)
   phaseMeta         Json?
+  agentSessionId    String?  // Link to agent session
+  agentSession      AgentSession? @relation(fields: [agentSessionId], references: [id], onDelete: Cascade)
   votes             Vote[]
   voteAccuracies    VoteAccuracy[]
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+
+  @@index([agentSessionId])
 }
 
 model Vote {
@@ -165,4 +169,22 @@ model AgentTransaction {
   createdAt DateTime @default(now())
 
   @@index([agentId, createdAt])
+}
+
+model AgentSession {
+  id            String   @id @default(cuid())
+  agentName     String   // Name of the agent
+  walletAddress String   // Wallet address of the agent
+  status        String   @default("active") // "active", "terminated", "expired"
+  lastHeartbeat DateTime @default(now())
+  startedAt     DateTime @default(now())
+  endedAt       DateTime?
+  metadata      Json?    // Additional session data
+  tasks         Task[]   // Tasks created in this session
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([agentName, status])
+  @@index([walletAddress, status])
+  @@index([lastHeartbeat])
 }

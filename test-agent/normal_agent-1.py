@@ -71,7 +71,9 @@ agent = AutoAgent(
     default_reward="0.4 USDC",  # Higher reward for sarcasm detection (complex task)
     default_reward_amount=0.4,  # Matching float value
     default_category="Sarcasm Detection",  # Specific category for this task
-    default_escrow_amount="0.8 USDC"  # 2x reward as escrow (best practice)
+    default_escrow_amount="0.8 USDC",  # 2x reward as escrow (best practice)
+    enable_session_management=True,  # Enable automatic session management
+    heartbeat_interval=60  # Send heartbeat every 60 seconds
 )
 
 # Confidence threshold for triggering Human RPC
@@ -164,8 +166,8 @@ Return ONLY valid JSON in this exact format:
 
 def handle_human_rpc_with_realtime_polling(ai_result: dict) -> dict:
     """
-    Handle Human RPC with immediate real-time polling.
-    This starts polling as soon as the task is created, not waiting for SDK completion.
+    Handle Human RPC using the SDK's built-in polling.
+    The SDK handles task creation and polling internally.
     """
     confidence = ai_result.get("confidence", 1.0)
     
@@ -192,83 +194,31 @@ def handle_human_rpc_with_realtime_polling(ai_result: dict) -> dict:
         }
     }
     
-    # Start Human RPC in background thread
-    import threading
-    import concurrent.futures
-    
-    def call_human_rpc():
-        try:
-            return agent.ask_human_rpc(
-                text=ai_result["userQuery"],
-                agentName="SarcasmDetector-v1",
-                reward="0.4 USDC",
-                rewardAmount=0.4,
-                category="Sarcasm Detection",
-                escrowAmount="0.8 USDC",
-                context=context
-            )
-        except Exception as e:
-            print(f"\n❌ Human RPC error: {e}")
-            return None
-    
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(call_human_rpc)
+    try:
+        # Call Human RPC - the SDK handles task creation and polling internally
+        human_result = agent.ask_human_rpc(
+            text=ai_result["userQuery"],
+            agentName="SarcasmDetector-v1",
+            reward="0.4 USDC",
+            rewardAmount=0.4,
+            category="Sarcasm Detection",
+            escrowAmount="0.8 USDC",
+            context=context
+        )
         
-        # Give it a moment to create the task
-        time.sleep(3)
-        
-        # Try to get the latest task ID
-        try:
-            response = requests.get("http://localhost:3000/api/v1/tasks", timeout=10)
-            if response.status_code == 200:
-                tasks = response.json()
-                if tasks and len(tasks) > 0:
-                    # Get the most recent task
-                    latest_task = tasks[0]
-                    task_id = latest_task.get("taskId")
-                    
-                    if task_id:
-                        print(f"📋 Task created: {task_id}")
-                        print("🚀 Starting real-time voting updates...")
-                        print()
-                        
-                        # Start real-time polling
-                        stop_event = threading.Event()
-                        poll_thread = threading.Thread(
-                            target=lambda: poll_task_progress_continuous(task_id, max_duration_minutes=15),
-                            args=()
-                        )
-                        poll_thread.start()
-                        
-                        # Wait for either polling to complete or Human RPC to finish
-                        try:
-                            human_result = future.result(timeout=900)  # 15 minutes max
-                            stop_event.set()
-                            poll_thread.join(timeout=5)
-                            
-                            if human_result:
-                                print("\n✅ Human RPC completed successfully!")
-                                # Combine AI result with human verdict
-                                combined_result = ai_result.copy()
-                                combined_result["human_verdict"] = human_result
-                                return combined_result
-                            
-                        except concurrent.futures.TimeoutError:
-                            print("\n⏰ Human RPC timeout - but polling may continue...")
-                            stop_event.set()
-                            poll_thread.join(timeout=5)
-                    
-        except Exception as e:
-            print(f"⚠️  Could not start real-time polling: {e}")
-            print("   Falling back to SDK polling...")
-            human_result = future.result()
-            if human_result:
-                combined_result = ai_result.copy()
-                combined_result["human_verdict"] = human_result
-                return combined_result
-    
-    # Return original result if Human RPC failed
-    return ai_result
+        if human_result:
+            print("\n✅ Human RPC completed successfully!")
+            # Combine AI result with human verdict
+            combined_result = ai_result.copy()
+            combined_result["human_verdict"] = human_result
+            return combined_result
+        else:
+            print("\n❌ Human RPC failed or returned None")
+            return ai_result
+            
+    except Exception as e:
+        print(f"\n❌ Human RPC error: {e}")
+        return ai_result
 
 
 def poll_task_progress_continuous(task_id: str, max_duration_minutes: int = 10) -> dict:

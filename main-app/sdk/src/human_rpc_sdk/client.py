@@ -159,7 +159,8 @@ class AutoAgent:
         Raises:
             ValueError: If polling times out (when max_wait_seconds is set) or fails
         """
-        task_url = f"{self.human_rpc_url}/{task_id}"
+        # Use query parameter approach as workaround for Next.js dynamic route issue
+        task_url = f"{self.human_rpc_url}?taskId={task_id}"
         
         print(f"🔄 Waiting for human decision...")
         
@@ -245,10 +246,10 @@ class AutoAgent:
         self,
         text: str,
         agentName: str = "SentimentAI-Pro",
-        reward: str = "0.3 USDC",
-        rewardAmount: float = 0.3,
+        reward: str = "0.3 USDC", # give choice to user
+        rewardAmount: float = 0.3, # give choice to user
         category: str = "Analysis",
-        escrowAmount: str = "0.6 USDC",
+        escrowAmount: str = "0.6 USDC", # give choice to user
         context: dict = None
     ) -> dict:
         """

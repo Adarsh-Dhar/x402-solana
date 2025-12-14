@@ -11,6 +11,8 @@ import json
 import base64
 import time
 import requests
+import signal
+import atexit
 from typing import Optional, Dict, Any
 from .wallet import WalletManager
 from .invoices import Invoice, parse_invoice_from_response
@@ -37,7 +39,9 @@ class AutoAgent:
         default_reward: str = "0.3 USDC",
         default_reward_amount: float = 0.3,
         default_category: str = "Analysis",
-        default_escrow_amount: str = "0.6 USDC"
+        default_escrow_amount: str = "0.6 USDC",
+        enable_session_management: bool = True,
+        heartbeat_interval: int = 60  # seconds
     ):
         """
         Initialize the AutoAgent.
@@ -53,6 +57,8 @@ class AutoAgent:
             default_reward_amount: Default reward amount as float
             default_category: Default category for human verification tasks
             default_escrow_amount: Default escrow amount as string (e.g., "0.6 USDC")
+            enable_session_management: Enable automatic session management and heartbeats
+            heartbeat_interval: Interval in seconds between heartbeat updates
             
         Raises:
             SDKConfigurationError: If configuration is invalid
@@ -84,9 +90,22 @@ class AutoAgent:
             os.getenv("HUMAN_RPC_URL", "http://localhost:3000/api/v1/tasks")
         )
         
+        # Session management
+        self.enable_session_management = enable_session_management
+        self.heartbeat_interval = heartbeat_interval
+        self.session_id = None
+        self.last_heartbeat = None
+        self._heartbeat_thread = None
+        self._shutdown_event = None
+        
         # Initialize HTTP session
         self.session = requests.Session()
         self.session.timeout = timeout
+        
+        # Start session management if enabled
+        if self.enable_session_management:
+            self._start_session_management()
+            self._setup_signal_handlers()
     
     def get(self, url: str, headers: Optional[Dict[str, str]] = None, **kwargs) -> requests.Response:
         """
@@ -321,6 +340,127 @@ class AutoAgent:
                 raise
             raise HumanVerificationError(f"Unexpected error: {e}")
     
+    def _start_session_management(self):
+        """Start agent session management with heartbeats."""
+        import threading
+        
+        try:
+            # Create or update session
+            self._create_or_update_session()
+            
+            # Start heartbeat thread
+            self._shutdown_event = threading.Event()
+            self._heartbeat_thread = threading.Thread(
+                target=self._heartbeat_worker,
+                daemon=True
+            )
+            self._heartbeat_thread.start()
+            
+            print(f"[Session] Started session management for {self.default_agent_name}")
+            
+        except Exception as e:
+            print(f"[Session] Failed to start session management: {e}")
+    
+    def _create_or_update_session(self):
+        """Create or update agent session."""
+        try:
+            session_url = self.human_rpc_url.replace("/tasks", "/agent-sessions")
+            
+            payload = {
+                "agentName": self.default_agent_name,
+                "walletAddress": str(self.wallet.get_public_key()),
+                "metadata": {
+                    "network": self.network,
+                    "sdkVersion": "1.0.0",
+                    "startedAt": time.time()
+                }
+            }
+            
+            response = self.session.post(session_url, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                self.session_id = data.get("sessionId")
+                self.last_heartbeat = time.time()
+                print(f"[Session] {data.get('message', 'Session updated')}: {self.session_id}")
+            else:
+                print(f"[Session] Failed to create/update session: {response.status_code}")
+                
+        except Exception as e:
+            print(f"[Session] Session management error: {e}")
+    
+    def _heartbeat_worker(self):
+        """Background worker for sending heartbeats."""
+        while not self._shutdown_event.is_set():
+            try:
+                # Wait for heartbeat interval or shutdown
+                if self._shutdown_event.wait(self.heartbeat_interval):
+                    break
+                
+                # Send heartbeat
+                self._create_or_update_session()
+                
+            except Exception as e:
+                print(f"[Session] Heartbeat error: {e}")
+    
+    def terminate_session(self):
+        """Manually terminate the agent session."""
+        try:
+            if self._shutdown_event:
+                self._shutdown_event.set()
+            
+            if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+                self._heartbeat_thread.join(timeout=5)
+            
+            if self.session_id:
+                session_url = self.human_rpc_url.replace("/tasks", "/agent-sessions")
+                params = {"sessionId": self.session_id}
+                
+                response = self.session.delete(session_url, params=params, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    print(f"[Session] Session terminated: {data.get('tasksCleanedUp', 0)} tasks cleaned up")
+                else:
+                    print(f"[Session] Failed to terminate session: {response.status_code}")
+            
+            self.session_id = None
+            
+        except Exception as e:
+            print(f"[Session] Error terminating session: {e}")
+    
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - automatically terminate session."""
+        if self.enable_session_management:
+            self.terminate_session()
+    
+    def _setup_signal_handlers(self):
+        """Set up signal handlers for graceful shutdown."""
+        def signal_handler(signum, frame):
+            print(f"\n🛑 Received signal {signum}. Cleaning up agent session...")
+            self.terminate_session()
+            print("✅ Agent session terminated. Exiting.")
+            os._exit(0)
+        
+        # Register signal handlers
+        signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+        signal.signal(signal.SIGTERM, signal_handler)  # Termination signal
+        
+        # Also register atexit handler as backup
+        atexit.register(self._cleanup_on_exit)
+    
+    def _cleanup_on_exit(self):
+        """Cleanup function called on exit."""
+        if self.enable_session_management and self.session_id:
+            try:
+                self.terminate_session()
+            except Exception:
+                pass  # Ignore errors during cleanup
+    
     def _validate_context(self, context: Dict[str, Any]) -> None:
         """Validate context structure for Human RPC requests."""
         if not isinstance(context, dict):
@@ -376,8 +516,10 @@ class AutoAgent:
         Raises:
             HumanVerificationError: If polling fails or times out
         """
-        task_url = f"{self.human_rpc_url}/{task_id}"
+        # Use query parameter approach as workaround for Next.js dynamic route issue
+        task_url = f"{self.human_rpc_url}?taskId={task_id}"
         print("🔄 Waiting for human decision...")
+        print(f"🔗 Polling URL: {task_url}")
         
         start_time = time.time()
         last_status_print = 0

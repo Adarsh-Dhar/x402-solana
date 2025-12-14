@@ -777,6 +777,63 @@ export async function POST(req: Request) {
         explorerUrl: `https://explorer.solana.com/tx/${paymentSignature}?cluster=${SOLANA_RPC_URL.includes("devnet") ? "devnet" : "mainnet-beta"}`,
       }
 
+      // Find or create agent session
+      let agentSessionId = null
+      if (agentName) {
+        const agentSessionModel = (prisma as any).agentSession
+        
+        // Try to find active session for this agent
+        // We'll use the wallet address from the payment transaction
+        const connection = new Connection(SOLANA_RPC_URL, "confirmed")
+        const tx = await connection.getTransaction(paymentSignature, {
+          commitment: "confirmed",
+        })
+        
+        let senderWallet = null
+        if (tx && tx.transaction.message.accountKeys.length > 0) {
+          // First account is typically the sender
+          const senderKey = tx.transaction.message.accountKeys[0]
+          senderWallet = senderKey.toBase58 ? senderKey.toBase58() : senderKey.toString()
+        }
+
+        if (senderWallet) {
+          // Find or create agent session
+          let agentSession = await agentSessionModel.findFirst({
+            where: {
+              agentName,
+              walletAddress: senderWallet,
+              status: "active"
+            }
+          })
+
+          if (!agentSession) {
+            // Create new session
+            agentSession = await agentSessionModel.create({
+              data: {
+                agentName,
+                walletAddress: senderWallet,
+                status: "active",
+                lastHeartbeat: new Date(),
+                metadata: {
+                  createdFromTask: true,
+                  firstTaskId: null // Will be updated after task creation
+                }
+              }
+            })
+            console.log(`[Tasks API] Created new agent session ${agentSession.id} for ${agentName}`)
+          } else {
+            // Update heartbeat
+            await agentSessionModel.update({
+              where: { id: agentSession.id },
+              data: { lastHeartbeat: new Date() }
+            })
+            console.log(`[Tasks API] Updated heartbeat for agent session ${agentSession.id}`)
+          }
+
+          agentSessionId = agentSession.id
+        }
+      }
+
       // Validate new context structure with required fields
       if (!context || typeof context !== 'object' || !('data' in context)) {
         return NextResponse.json(
@@ -894,6 +951,7 @@ export async function POST(req: Request) {
           rewardAmount: rewardAmount ? parseFloat(rewardAmount.toString()) : null,
           category: category || null,
           escrowAmount: escrowAmount || null,
+          agentSessionId: agentSessionId, // Link to agent session
           aiCertainty: aiCertainty,
           requiredVoters: requiredVoters,
           consensusThreshold: consensusThreshold,
@@ -1010,30 +1068,204 @@ function mapStatus(dbStatus: string): "open" | "urgent" | "completed" {
   return "open" // default
 }
 
+/**
+ * Get individual task by ID (workaround for dynamic route issue)
+ */
+async function getIndividualTask(prisma: PrismaClient, taskId: string) {
+  try {
+    console.log("[Tasks API] Fetching individual task:", taskId)
+    
+    const taskModel = getTaskModel(prisma)
+    
+    // Find task by ID
+    const task = await taskModel.findUnique({
+      where: { id: taskId },
+    })
+
+    console.log("[Tasks API] Query result:", task ? "Task found" : "Task not found")
+    if (task) {
+      console.log("[Tasks API] Found task details:", {
+        id: task.id,
+        agentName: task.agentName,
+        status: task.status,
+        createdAt: task.createdAt
+      })
+    }
+
+    if (!task) {
+      console.log("[Tasks API] Task not found, returning 404")
+      return NextResponse.json(
+        { error: "Task not found" },
+        { status: 404 }
+      )
+    }
+
+    // Return task with status, result, and consensus information
+    const yesVotes = task.yesVotes || 0
+    const noVotes = task.noVotes || 0
+    const currentVoteCount = task.currentVoteCount || 0
+    const requiredVoters = task.requiredVoters || 3
+    const consensusThreshold = task.consensusThreshold ? parseFloat(task.consensusThreshold.toString()) : 0.51
+    const aiCertainty = task.aiCertainty ? parseFloat(task.aiCertainty.toString()) : null
+
+    return NextResponse.json(
+      {
+        id: task.id,
+        status: task.status,
+        result: task.result,
+        text: task.text,
+        agentName: task.agentName,
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+        consensus: {
+          aiCertainty,
+          requiredVoters,
+          consensusThreshold,
+          currentVoteCount,
+          yesVotes,
+          noVotes,
+        },
+      },
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+        },
+      }
+    )
+  } catch (error: any) {
+    console.error("[Tasks API] Individual task error:", error)
+    return NextResponse.json(
+      {
+        error: `Failed to fetch task: ${error?.message || "Unknown error"}`,
+      },
+      {
+        status: 500,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+        },
+      }
+    )
+  }
+}
+
+/**
+ * Clean up expired agent sessions and their tasks
+ */
+async function cleanupExpiredSessions(prisma: PrismaClient) {
+  try {
+    const agentSessionModel = (prisma as any).agentSession
+    const taskModel = getTaskModel(prisma)
+
+    // Session timeout: 5 minutes
+    const timeoutDate = new Date(Date.now() - 5 * 60 * 1000)
+
+    // Find expired sessions
+    const expiredSessions = await agentSessionModel.findMany({
+      where: {
+        status: "active",
+        lastHeartbeat: {
+          lt: timeoutDate
+        }
+      }
+    })
+
+    if (expiredSessions.length === 0) {
+      return
+    }
+
+    console.log(`[Tasks API] Found ${expiredSessions.length} expired agent sessions`)
+
+    // Mark sessions as expired
+    await agentSessionModel.updateMany({
+      where: {
+        id: {
+          in: expiredSessions.map((s: any) => s.id)
+        }
+      },
+      data: {
+        status: "expired",
+        endedAt: new Date()
+      }
+    })
+
+    // Clean up pending tasks from expired sessions
+    const deletedTasks = await taskModel.deleteMany({
+      where: {
+        agentSessionId: {
+          in: expiredSessions.map((s: any) => s.id)
+        },
+        status: {
+          in: ["pending", "urgent"]
+        }
+      }
+    })
+
+    console.log(`[Tasks API] Expired ${expiredSessions.length} sessions, cleaned up ${deletedTasks.count} tasks`)
+
+  } catch (error: any) {
+    console.error("[Tasks API] Session cleanup error:", error)
+  }
+}
+
 export async function GET(req: Request) {
   try {
     console.log("[Tasks API] GET handler called")
     const prisma = await getPrisma()
     console.log("[Tasks API] Prisma client obtained")
 
-    // Check for userId in query params (optional - for filtering by eligibility)
+    // Check for individual task ID in query params (workaround for dynamic route issue)
     const url = new URL(req.url)
+    const taskId = url.searchParams.get("taskId")
     const userId = url.searchParams.get("userId")
     const userEmail = url.searchParams.get("userEmail")
+
+    // If taskId is provided, return individual task (workaround for [taskId] route issue)
+    if (taskId) {
+      console.log("[Tasks API] Individual task request for ID:", taskId)
+      return await getIndividualTask(prisma, taskId)
+    }
 
     // Get task model safely
     const taskModel = getTaskModel(prisma)
     console.log("[Tasks API] Task model accessed successfully")
 
-    // Fetch all tasks from database
+    // Clean up expired agent sessions first
+    await cleanupExpiredSessions(prisma)
+
+    // Fetch tasks from active agent sessions only
     let tasks
     try {
       tasks = await taskModel.findMany({
+        where: {
+          OR: [
+            // Tasks with active agent sessions
+            {
+              agentSession: {
+                status: "active"
+              }
+            },
+            // Tasks without agent sessions (legacy tasks)
+            {
+              agentSessionId: null
+            }
+          ]
+        },
+        include: {
+          agentSession: {
+            select: {
+              id: true,
+              agentName: true,
+              status: true,
+              lastHeartbeat: true
+            }
+          }
+        },
         orderBy: {
           createdAt: "desc",
         },
       })
-      console.log(`[Tasks API] Found ${tasks.length} tasks`)
+      console.log(`[Tasks API] Found ${tasks.length} tasks from active sessions`)
     } catch (dbError: any) {
       console.error("[Tasks API] Database query error:", dbError)
       console.error("[Tasks API] Error details:", {
