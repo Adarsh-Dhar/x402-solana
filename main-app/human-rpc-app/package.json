@@ -1,9 +1,9 @@
 {
-  "name": "x402-solana",
+  "name": "my-v0-project",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "prisma generate && next build",
+    "build": "next build",
     "dev": "next dev",
     "lint": "eslint .",
     "start": "next start",

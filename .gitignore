@@ -1,11 +1,55 @@
+# Dependencies
+node_modules/
 /main-app/human-rpc-app/node_modules
-/main-app/human-rpc-app/next.config.mjs
-/main-app/human-rpc-app/package-lock.json
-/main-app/human-rpc-app/package.json
-/main-app/human-rpc-app/README.md
+
+# Next.js
+.next/
+out/
+/main-app/human-rpc-app/.next/
+
+# Environment files
+.env
+.env.local
+.env.production.local
+.env.development.local
 /main-app/human-rpc-app/.env
 /main-app/human-rpc-app/.env.local
-/main-app/human-rpc-app/.next/dev
-/main-app/human-rpc-app/public
 /test-agent/.env
 /test-agent/.env.local
+
+# Build outputs
+dist/
+build/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Prisma
+/prisma/.env

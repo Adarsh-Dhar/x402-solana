@@ -1,0 +1,224 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Note: The `url` property is valid and required for Prisma 6.x
+// The linter may show a warning about Prisma 7 syntax, but this schema is correct for Prisma 6.19.0
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String   @id @default(cuid())
+  email               String   @unique
+  password            String
+  walletAddress       String?
+  stakeAmount         Decimal? @db.Decimal(10, 2)
+  stakeTransactionHash String?
+  points              Int      @default(0)
+  rank                String?  @map("user_rank") // "CADET", "OFFICER", "ARBITER" - mapped to avoid conflict with PostgreSQL rank() function
+  rankUpdatedAt       DateTime?
+  godModeBadge        Boolean  @default(false)
+  godModeBadgeEarnedAt DateTime?
+  totalVotes          Int      @default(0)
+  correctVotes        Int      @default(0)
+  accuracy30DayStart  DateTime?
+  consecutiveCorrectDays Int   @default(0)
+  isBanned            Boolean  @default(false)
+  votes               Vote[]
+  notifications       Notification[]
+  voteAccuracies      VoteAccuracy[]
+  voterEligibilities  VoterEligibility[]
+  agents              Agent[]
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model Task {
+  id                String   @id @default(cuid())
+  text              String
+  taskType          String
+  taskTier          String?  // "TRAINING", "LIVE_FIRE", "DISPUTE"
+  paymentSignature  String?
+  status            String   @default("pending")
+  result            Json?
+  agentName         String?
+  reward            String?
+  rewardAmount      Decimal? @db.Decimal(10, 2)
+  category          String?
+  escrowAmount      String?
+  context           Json?
+  aiCertainty       Decimal? @db.Decimal(3, 2)
+  requiredVoters    Int?     @default(3)
+  consensusThreshold Decimal? @db.Decimal(3, 2)
+  currentVoteCount  Int      @default(0)
+  yesVotes          Int      @default(0)
+  noVotes           Int      @default(0)
+  currentPhase      Int      @default(1)
+  phaseMeta         Json?
+  agentSessionId    String?  // Link to agent session
+  agentSession      AgentSession? @relation(fields: [agentSessionId], references: [id], onDelete: Cascade)
+  votes             Vote[]
+  voteAccuracies    VoteAccuracy[]
+  phaseTransitions  PhaseTransition[]
+  voterEligibilities VoterEligibility[]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([agentSessionId])
+  @@index([currentPhase])
+}
+
+model Vote {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  decision  String   // "yes" or "no"
+  createdAt DateTime @default(now())
+
+  @@index([taskId])
+  @@index([userId])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String
+  metadata  Json?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+}
+
+model VoteAccuracy {
+  id               String   @id @default(cuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskId           String
+  task             Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  voteDecision     String   // "yes" or "no"
+  consensusDecision String  // "yes" or "no"
+  isCorrect        Boolean
+  createdAt        DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([taskId])
+}
+
+model Agent {
+  id                  String   @id @default(cuid())
+  userId              String
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                String
+  description         String?
+  avatarUrl           String?
+  confidenceThreshold Decimal  @db.Decimal(3, 2) // 0.00 to 1.00
+  maxDailyBudget      Decimal  @db.Decimal(10, 2) // USDC
+  responseTime        String   // "fast" | "standard" | "economy"
+  agentId             String   @unique // Public unique identifier
+  apiKeyHash          String   // Hashed API key
+  balance             Decimal  @default(0) @db.Decimal(10, 2) // USDC balance
+  walletAddress       String?  // Solana wallet address for this agent
+  onChainAddress      String?  // On-chain program-derived address
+  isActive            Boolean  @default(true)
+  autoRefuelEnabled   Boolean  @default(false)
+  autoRefuelThreshold Decimal? @db.Decimal(10, 2) // USDC threshold
+  autoRefuelAmount    Decimal? @db.Decimal(10, 2) // USDC amount to refuel
+  activities          AgentActivity[]
+  transactions        AgentTransaction[]
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([userId])
+  @@index([agentId])
+}
+
+model AgentActivity {
+  id           String   @id @default(cuid())
+  agentId      String
+  agent        Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  taskId       String?
+  query        String
+  aiConfidence Decimal? @db.Decimal(3, 2) // 0.00 to 1.00
+  status       String   // "resolved" | "ai_auto" | "pending"
+  humanVerdict String?  // Human decision if resolved
+  cost         Decimal? @db.Decimal(10, 2) // USDC cost
+  timestamp    DateTime @default(now())
+
+  @@index([agentId, timestamp])
+  @@index([taskId])
+}
+
+model AgentTransaction {
+  id        String   @id @default(cuid())
+  agentId   String
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  type      String   // "topup" | "payment" | "refund"
+  amount    Decimal  @db.Decimal(10, 2) // USDC
+  signature String?  // Solana transaction signature
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([agentId, createdAt])
+}
+
+model AgentSession {
+  id            String   @id @default(cuid())
+  agentName     String   // Name of the agent
+  walletAddress String   // Wallet address of the agent
+  status        String   @default("active") // "active", "terminated", "expired"
+  lastHeartbeat DateTime @default(now())
+  startedAt     DateTime @default(now())
+  endedAt       DateTime?
+  metadata      Json?    // Additional session data
+  tasks         Task[]   // Tasks created in this session
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([agentName, status])
+  @@index([walletAddress, status])
+  @@index([lastHeartbeat])
+}
+
+model PhaseTransition {
+  id          String   @id @default(cuid())
+  taskId      String
+  task        Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  fromPhase   Int
+  toPhase     Int?
+  reason      String
+  voterCount  Int
+  timestamp   DateTime @default(now())
+
+  @@index([taskId])
+  @@index([timestamp])
+}
+
+model VoterEligibility {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phase     Int
+  eligible  Boolean
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@index([taskId, phase])
+  @@index([userId, phase])
+  @@unique([taskId, userId, phase])
+}
