@@ -20,9 +20,10 @@ const STAKE_AMOUNT_LAMPORTS = STAKE_AMOUNT_SOL * LAMPORTS_PER_SOL
 function SimpleWalletButton() {
   console.log("[SimpleWalletButton] Rendering wallet button")
   return (
-    <div className="space-y-2">
-      <p className="text-sm text-muted-foreground">Solana Wallet Adapter Button:</p>
+    <div className="space-y-2 p-3 border border-purple-500/50 rounded bg-purple-500/5">
+      <p className="text-sm text-purple-400 font-semibold">🟣 Solana Wallet Adapter Button:</p>
       <WalletMultiButton className="w-full !bg-purple-600 hover:!bg-purple-700" />
+      <p className="text-xs text-purple-300">This should show a "Select Wallet" button</p>
     </div>
   )
 }
@@ -36,8 +37,8 @@ function CustomWalletButton() {
   
   return (
     <div className="space-y-2 p-3 border border-blue-500/50 rounded bg-blue-500/5">
-      <p className="text-sm text-blue-400 font-semibold">Debug Wallet Info:</p>
-      <div className="text-xs space-y-1">
+      <p className="text-sm text-blue-400 font-semibold">🔵 Debug Wallet Info:</p>
+      <div className="text-xs space-y-1 text-blue-200">
         <p>Connected: {connected ? 'Yes' : 'No'}</p>
         <p>Key: {publicKey?.toString().slice(0, 20) || 'None'}...</p>
         <p>Available Wallets: {wallets.length}</p>
@@ -388,7 +389,23 @@ export default function RegisterPage() {
               </div>
             </div>
 
+            {/* Debug: Show current step */}
+            <div className="mb-4 p-3 bg-red-500/10 border border-red-500/50 rounded">
+              <p className="text-red-400 font-semibold">DEBUG INFO:</p>
+              <p className="text-xs">Current step: {step}</p>
+              <p className="text-xs">Connected: {connected ? 'true' : 'false'}</p>
+              <p className="text-xs">PublicKey: {publicKey?.toString() || 'null'}</p>
+            </div>
+
             <div className="mb-6 space-y-4">
+              {/* Test button to verify rendering */}
+              <Button
+                onClick={() => alert('Test button works!')}
+                className="w-full bg-red-600 hover:bg-red-700 text-white"
+              >
+                🔴 TEST BUTTON - Click to verify rendering
+              </Button>
+
               <SimpleWalletButton />
               <CustomWalletButton />
               
