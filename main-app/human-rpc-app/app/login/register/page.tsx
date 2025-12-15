@@ -20,6 +20,10 @@ export default function RegisterPage() {
   if (typeof window !== "undefined") {
     console.log("[Register] Component render", {
       path: window.location.pathname,
+      rpcUrl: process.env.NEXT_PUBLIC_SOLANA_RPC_URL,
+      stakingWallet: process.env.NEXT_PUBLIC_STAKING_WALLET,
+      stakeMint: process.env.NEXT_PUBLIC_STAKE_MINT,
+      nodeEnv: process.env.NODE_ENV,
     })
   }
   const router = useRouter()
@@ -571,8 +575,20 @@ export default function RegisterPage() {
               </div>
             </div>
 
-            <div className="mb-6">
+            <div className="mb-6 space-y-4">
               <CustomWalletButton />
+              
+              {/* Fallback test button */}
+              <Button
+                onClick={() => {
+                  console.log("[RegisterPage] Fallback button clicked")
+                  alert("Fallback button works! This means the issue is with wallet adapter.")
+                }}
+                className="w-full justify-center border-orange-500/50 font-semibold text-orange-500 hover:bg-orange-500/10 bg-transparent"
+              >
+                <Wallet className="mr-2 h-4 w-4" />
+                Test Button (Should Always Work)
+              </Button>
             </div>
 
             {connected && publicKey && (
