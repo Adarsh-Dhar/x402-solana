@@ -35,7 +35,7 @@ NEXT_PUBLIC_STAKE_MINT="4hkhMPGQYyp3zxfAtVyiTFwnfFMVZumE8295WE4qAryo"
 NEXT_PUBLIC_STAKING_WALLET="CVCq5Swz7Fbzku7iNqgeANjYLJgQDAgnf4vq8nCbaRn2"
 
 # Solana RPC (REQUIRED for production)
-NEXT_PUBLIC_SOLANA_RPC_URL="https://api.mainnet-beta.solana.com"
+NEXT_PUBLIC_SOLANA_RPC_URL="https://api.devnet.solana.com"
 # Or use a premium RPC provider for better reliability:
 # NEXT_PUBLIC_SOLANA_RPC_URL="https://rpc.helius.xyz/?api-key=YOUR-API-KEY"
 

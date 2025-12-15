@@ -24,7 +24,7 @@ NEXTAUTH_URL="https://YOUR-ACTUAL-VERCEL-DOMAIN.vercel.app"
 # Solana Configuration (✅ Fixed)
 NEXT_PUBLIC_STAKE_MINT="4hkhMPGQYyp3zxfAtVyiTFwnfFMVZumE8295WE4qAryo"
 NEXT_PUBLIC_STAKING_WALLET="CVCq5Swz7Fbzku7iNqgeANjYLJgQDAgnf4vq8nCbaRn2"
-NEXT_PUBLIC_SOLANA_RPC_URL="https://api.mainnet-beta.solana.com"
+NEXT_PUBLIC_SOLANA_RPC_URL="https://api.devnet.solana.com"
 
 # Features
 ENABLE_NEGATIVE_POINTS_CLEANUP="true"

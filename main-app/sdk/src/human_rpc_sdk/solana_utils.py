@@ -23,7 +23,7 @@ TOKEN_PROGRAM_ID = Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5
 ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
 
 # Default RPC URLs
-DEFAULT_MAINNET_RPC_URL = "https://api.mainnet-beta.solana.com"
+DEFAULT_MAINNET_RPC_URL = "https://api.devnet.solana.com"
 DEFAULT_DEVNET_RPC_URL = "https://api.devnet.solana.com"
 
 

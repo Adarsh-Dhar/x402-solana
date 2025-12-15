@@ -10,7 +10,7 @@ from solders.instruction import Instruction, AccountMeta
 from solders.system_program import transfer, TransferParams
 
 # Default RPC URLs (can be overridden via environment variables)
-DEFAULT_MAINNET_RPC_URL = "https://api.mainnet-beta.solana.com"
+DEFAULT_MAINNET_RPC_URL = "https://api.devnet.solana.com"
 DEFAULT_DEVNET_RPC_URL = "https://api.devnet.solana.com"
 
 USDC_MINT = Pubkey.from_string("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
