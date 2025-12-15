@@ -50,7 +50,7 @@ export interface Task {
 }
 
 export default function HumanRPCApp() {
-  const { data: session } = useSession()
+  const { data: session, status } = useSession()
   const [currentView, setCurrentView] = useState<ViewType>("dashboard")
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [hasUrgentNotification, setHasUrgentNotification] = useState(false)
@@ -172,10 +172,31 @@ export default function HumanRPCApp() {
 
   const showHeader = currentView !== "login" && currentView !== "register"
 
+  // Handle authentication state
+  useEffect(() => {
+    if (status === "loading") return // Still loading
+    
+    if (!session && currentView !== "login" && currentView !== "register") {
+      setCurrentView("login")
+    }
+  }, [session, status, currentView])
+
+  // Show loading while checking authentication
+  if (status === "loading") {
+    return (
+      <div className="min-h-screen bg-background w-full flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-background w-full">
       <AnimatePresence mode="wait">
-        {showHeader && (
+        {showHeader && session && (
           <Header
             onProfileClick={() => handleNavigate("profile")}
             onLogoClick={() => handleNavigate("dashboard")}
@@ -194,7 +215,7 @@ export default function HumanRPCApp() {
           transition={{ duration: 0.3 }}
           className={showHeader ? "pt-20" : ""}
         >
-          {currentView === "dashboard" && (
+          {currentView === "dashboard" && session && (
             <Dashboard 
               activeTasks={activeTasks}
               completedTasks={completedTasks}
@@ -206,10 +227,10 @@ export default function HumanRPCApp() {
               onCategoryChange={setTaskCategory}
             />
           )}
-          {currentView === "task-details" && selectedTask && (
+          {currentView === "task-details" && selectedTask && session && (
             <TaskDetails task={selectedTask} onBack={() => handleNavigate("dashboard")} />
           )}
-          {currentView === "profile" && <Profile onBack={() => handleNavigate("dashboard")} />}
+          {currentView === "profile" && session && <Profile onBack={() => handleNavigate("dashboard")} />}
           {currentView === "login" && (
             <Login onLogin={() => handleNavigate("dashboard")} onRegister={() => handleNavigate("register")} />
           )}
