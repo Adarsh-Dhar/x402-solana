@@ -1,39 +1,116 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { signIn } from "next-auth/react"
-import { motion } from "framer-motion"
-import { ArrowLeft, Cpu, Mail, Lock, Wallet, LockIcon, AlertCircle } from "lucide-react"
+import { ArrowLeft, Cpu, Wallet } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { useWallet } from "@solana/wallet-adapter-react"
-import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js"
-import { CustomWalletButton } from "@/components/custom-wallet-button"
-import { SimpleWalletButton } from "@/components/simple-wallet-button"
-import { stakeWithProgram } from "@/lib/solanaStaking"
-
-const STAKE_AMOUNT_SOL = 0.01 // 0.01 SOL stake for devnet
-const STAKE_AMOUNT_LAMPORTS = Math.round(STAKE_AMOUNT_SOL * LAMPORTS_PER_SOL)
+import { WalletMultiButton } from "@solana/wallet-adapter-react-ui"
 
 export default function RegisterPage() {
-  console.log("[RegisterPage] COMPONENT STARTING TO RENDER")
+  console.log("[RegisterPage] SIMPLE VERSION STARTING TO RENDER")
   
-  if (typeof window !== "undefined") {
-    console.log("[RegisterPage] Client-side render", {
-      path: window.location.pathname,
-      rpcUrl: process.env.NEXT_PUBLIC_SOLANA_RPC_URL,
-      stakingWallet: process.env.NEXT_PUBLIC_STAKING_WALLET,
-      stakeMint: process.env.NEXT_PUBLIC_STAKE_MINT,
-      nodeEnv: process.env.NODE_ENV,
-    })
-  } else {
-    console.log("[RegisterPage] Server-side render")
-  }
   const router = useRouter()
-  const wallet = useWallet()
-  const { publicKey, connected } = wallet
+  const [step, setStep] = useState<"form" | "stake">("stake") // Start on stake step to show wallet button
+  
+  // Safely handle wallet hook
+  let wallet: any = {}
+  let publicKey: any = null
+  let connected = false
+  
+  try {
+    console.log("[RegisterPage] Attempting to use wallet hook")
+    wallet = useWallet()
+    publicKey = wallet.publicKey
+    connected = wallet.connected
+    console.log("[RegisterPage] Wallet hook successful", { connected, publicKey: publicKey?.toString() })
+  } catch (error: any) {
+    console.error("[RegisterPage] Wallet hook failed", error)
+    wallet = { publicKey: null, connected: false }
+  }
+
+  console.log("[RegisterPage] ABOUT TO RETURN JSX", { step, connected, publicKey: publicKey?.toString() })
+
+  return (
+    <div className="flex min-h-screen items-center justify-center px-4 py-12">
+      <div className="w-full max-w-md space-y-6">
+        <button
+          onClick={() => router.push("/login")}
+          className="mb-6 flex items-center gap-2 text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          <span className="font-mono text-sm">Back to Login</span>
+        </button>
+
+        <div className="mb-8 text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--solana-purple)]/10 border border-[var(--solana-purple)]/30">
+            <Cpu className="h-6 w-6 text-[var(--solana-purple)]" />
+          </div>
+          <h1 className="text-2xl font-bold text-foreground">Join Human RPC</h1>
+          <p className="mt-2 text-muted-foreground">Simple wallet connection test</p>
+        </div>
+
+        <div className="rounded-xl border border-border bg-card/50 p-6 backdrop-blur-sm space-y-4">
+          {/* Debug info */}
+          <div className="p-3 bg-gray-800 rounded text-xs text-white">
+            <p>Debug Info:</p>
+            <p>Step: {step}</p>
+            <p>Connected: {connected ? 'true' : 'false'}</p>
+            <p>PublicKey: {publicKey?.toString() || 'null'}</p>
+            <p>Wallet object: {wallet ? 'exists' : 'null'}</p>
+          </div>
+
+          {/* Test buttons */}
+          <Button
+            onClick={() => {
+              console.log("[RegisterPage] Simple test button clicked")
+              alert("Simple button works!")
+            }}
+            className="w-full bg-green-500 hover:bg-green-600 text-white"
+          >
+            Simple Test Button
+          </Button>
+
+          {/* Wallet adapter button */}
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground">Wallet Adapter Button:</p>
+            <WalletMultiButton className="w-full" />
+          </div>
+
+          {/* Manual wallet connection */}
+          <Button
+            onClick={async () => {
+              console.log("[RegisterPage] Manual wallet connection attempt")
+              try {
+                if (typeof window !== 'undefined' && (window as any).solana) {
+                  console.log("Found window.solana:", (window as any).solana)
+                  const resp = await (window as any).solana.connect()
+                  console.log("Direct connection result:", resp)
+                  alert(`Connected to: ${resp.publicKey.toString()}`)
+                } else {
+                  alert("No Solana wallet found in window object")
+                }
+              } catch (err: any) {
+                console.error("Manual connection error:", err)
+                alert(`Connection error: ${err.message}`)
+              }
+            }}
+            className="w-full bg-purple-500 hover:bg-purple-600 text-white"
+          >
+            <Wallet className="mr-2 h-4 w-4" />
+            Try Direct Phantom Connection
+          </Button>
+
+          {/* Environment info */}
+          <div className="text-xs text-muted-foreground p-2 bg-muted/50 rounded">
+            <p>RPC URL: {process.env.NEXT_PUBLIC_SOLANA_RPC_URL || 'not set'}</p>
+            <p>Staking Wallet: {process.env.NEXT_PUBLIC_STAKING_WALLET || 'not set'}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
   const [step, setStep] = useState<"form" | "stake">("form")
   const [isLoading, setIsLoading] = useState(false)
   const [isStaking, setIsStaking] = useState(false)
