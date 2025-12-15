@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { SessionProvider } from '@/components/providers/session-provider'
@@ -13,17 +13,6 @@ export const metadata: Metadata = {
   title: 'Tinder for Truth - Human RPC',
   description: 'Swipe to verify AI-generated content. Fast, rhythmic, rewarding.',
   generator: 'v0.app',
-  viewport: {
-    width: 'device-width',
-    initialScale: 1,
-    maximumScale: 1,
-    userScalable: false,
-    viewportFit: 'cover',
-  },
-  themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#000000' },
-    { media: '(prefers-color-scheme: dark)', color: '#000000' },
-  ],
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
@@ -46,6 +35,18 @@ export const metadata: Metadata = {
     ],
     apple: '/apple-icon.png',
   },
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: 'cover',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#000000' },
+    { media: '(prefers-color-scheme: dark)', color: '#000000' },
+  ],
 }
 
 export default function RootLayout({
