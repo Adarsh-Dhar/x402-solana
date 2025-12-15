@@ -1,0 +1,6 @@
+{
+  "framework": "nextjs",
+  "rootDirectory": "main-app/human-rpc-app",
+  "buildCommand": "pnpm prisma generate && pnpm run build",
+  "installCommand": "pnpm install"
+}
