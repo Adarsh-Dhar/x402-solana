@@ -1,116 +1,51 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, Cpu, Wallet } from "lucide-react"
+import { ArrowLeft, Cpu, Wallet, Mail, Lock, AlertCircle, LockIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
 import { useWallet } from "@solana/wallet-adapter-react"
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui"
+import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js"
+import { signIn } from "next-auth/react"
+import { motion } from "framer-motion"
+
+// Constants
+const STAKE_AMOUNT_SOL = 0.1
+const STAKE_AMOUNT_LAMPORTS = STAKE_AMOUNT_SOL * LAMPORTS_PER_SOL
+
+// Simple wallet button component
+function SimpleWalletButton() {
+  return (
+    <WalletMultiButton className="w-full" />
+  )
+}
+
+// Custom wallet button component
+function CustomWalletButton() {
+  const { connected, publicKey } = useWallet()
+  
+  return (
+    <div className="text-xs">
+      <p>Connected: {connected ? 'Yes' : 'No'}</p>
+      <p>Key: {publicKey?.toString().slice(0, 20) || 'None'}...</p>
+    </div>
+  )
+}
+
+// Placeholder staking function
+async function stakeWithProgram({ wallet, connection, amount }: any) {
+  // This is a placeholder - implement actual staking logic
+  console.log("Staking with program:", { amount })
+  return "mock_transaction_signature"
+}
 
 export default function RegisterPage() {
   console.log("[RegisterPage] SIMPLE VERSION STARTING TO RENDER")
   
   const router = useRouter()
-  const [step, setStep] = useState<"form" | "stake">("stake") // Start on stake step to show wallet button
-  
-  // Safely handle wallet hook
-  let wallet: any = {}
-  let publicKey: any = null
-  let connected = false
-  
-  try {
-    console.log("[RegisterPage] Attempting to use wallet hook")
-    wallet = useWallet()
-    publicKey = wallet.publicKey
-    connected = wallet.connected
-    console.log("[RegisterPage] Wallet hook successful", { connected, publicKey: publicKey?.toString() })
-  } catch (error: any) {
-    console.error("[RegisterPage] Wallet hook failed", error)
-    wallet = { publicKey: null, connected: false }
-  }
-
-  console.log("[RegisterPage] ABOUT TO RETURN JSX", { step, connected, publicKey: publicKey?.toString() })
-
-  return (
-    <div className="flex min-h-screen items-center justify-center px-4 py-12">
-      <div className="w-full max-w-md space-y-6">
-        <button
-          onClick={() => router.push("/login")}
-          className="mb-6 flex items-center gap-2 text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          <span className="font-mono text-sm">Back to Login</span>
-        </button>
-
-        <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--solana-purple)]/10 border border-[var(--solana-purple)]/30">
-            <Cpu className="h-6 w-6 text-[var(--solana-purple)]" />
-          </div>
-          <h1 className="text-2xl font-bold text-foreground">Join Human RPC</h1>
-          <p className="mt-2 text-muted-foreground">Simple wallet connection test</p>
-        </div>
-
-        <div className="rounded-xl border border-border bg-card/50 p-6 backdrop-blur-sm space-y-4">
-          {/* Debug info */}
-          <div className="p-3 bg-gray-800 rounded text-xs text-white">
-            <p>Debug Info:</p>
-            <p>Step: {step}</p>
-            <p>Connected: {connected ? 'true' : 'false'}</p>
-            <p>PublicKey: {publicKey?.toString() || 'null'}</p>
-            <p>Wallet object: {wallet ? 'exists' : 'null'}</p>
-          </div>
-
-          {/* Test buttons */}
-          <Button
-            onClick={() => {
-              console.log("[RegisterPage] Simple test button clicked")
-              alert("Simple button works!")
-            }}
-            className="w-full bg-green-500 hover:bg-green-600 text-white"
-          >
-            Simple Test Button
-          </Button>
-
-          {/* Wallet adapter button */}
-          <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">Wallet Adapter Button:</p>
-            <WalletMultiButton className="w-full" />
-          </div>
-
-          {/* Manual wallet connection */}
-          <Button
-            onClick={async () => {
-              console.log("[RegisterPage] Manual wallet connection attempt")
-              try {
-                if (typeof window !== 'undefined' && (window as any).solana) {
-                  console.log("Found window.solana:", (window as any).solana)
-                  const resp = await (window as any).solana.connect()
-                  console.log("Direct connection result:", resp)
-                  alert(`Connected to: ${resp.publicKey.toString()}`)
-                } else {
-                  alert("No Solana wallet found in window object")
-                }
-              } catch (err: any) {
-                console.error("Manual connection error:", err)
-                alert(`Connection error: ${err.message}`)
-              }
-            }}
-            className="w-full bg-purple-500 hover:bg-purple-600 text-white"
-          >
-            <Wallet className="mr-2 h-4 w-4" />
-            Try Direct Phantom Connection
-          </Button>
-
-          {/* Environment info */}
-          <div className="text-xs text-muted-foreground p-2 bg-muted/50 rounded">
-            <p>RPC URL: {process.env.NEXT_PUBLIC_SOLANA_RPC_URL || 'not set'}</p>
-            <p>Staking Wallet: {process.env.NEXT_PUBLIC_STAKING_WALLET || 'not set'}</p>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
   const [step, setStep] = useState<"form" | "stake">("form")
   const [isLoading, setIsLoading] = useState(false)
   const [isStaking, setIsStaking] = useState(false)
@@ -121,6 +56,10 @@ export default function RegisterPage() {
     email: "",
     password: "",
   })
+  
+  // Safely handle wallet hook
+  const wallet = useWallet()
+  const { publicKey, connected } = wallet
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -148,7 +87,6 @@ export default function RegisterPage() {
       }
 
       setRegisteredUserId(data?.user?.id ?? null)
-      // After successful registration, move to staking step
       setStep("stake")
       setIsLoading(false)
     } catch (err) {
@@ -183,11 +121,8 @@ export default function RegisterPage() {
     }
   }
 
-  // Helper function to safely parse JSON response
   const parseJSONResponse = async (response: Response) => {
     const contentType = response.headers.get("content-type")
-    
-    // Clone the response so we can read it multiple times if needed
     const clonedResponse = response.clone()
     const text = await clonedResponse.text()
     
@@ -223,26 +158,10 @@ export default function RegisterPage() {
 
     try {
       const rpcUrl = process.env.NEXT_PUBLIC_SOLANA_RPC_URL || "https://api.devnet.solana.com"
-      console.log("[Stake] Starting stake flow with config:", {
-        rpcUrl,
-        stakeAmountSol: STAKE_AMOUNT_SOL,
-        stakeAmountLamports: STAKE_AMOUNT_LAMPORTS,
-        walletConnected: connected,
-        walletPublicKey: publicKey.toString(),
-      })
-
       const connection = new Connection(rpcUrl, "confirmed")
 
-      // Check user's SOL balance before attempting to send the transaction
       const balanceLamports = await connection.getBalance(publicKey)
-      const requiredLamports = STAKE_AMOUNT_LAMPORTS + 5000 // small extra for fees
-
-      console.log("[Stake] Wallet balance check:", {
-        balanceLamports,
-        balanceSol: balanceLamports / LAMPORTS_PER_SOL,
-        requiredLamports,
-        requiredSol: requiredLamports / LAMPORTS_PER_SOL,
-      })
+      const requiredLamports = STAKE_AMOUNT_LAMPORTS + 5000
 
       if (balanceLamports < requiredLamports) {
         setError(
@@ -254,15 +173,12 @@ export default function RegisterPage() {
         return
       }
 
-      // Call the on-chain staking program instead of a raw SOL transfer
       const signature = await stakeWithProgram({
         wallet,
         connection,
         amount: BigInt(STAKE_AMOUNT_LAMPORTS),
       })
-      console.log("[Stake] Staking program transaction confirmed:", { signature })
 
-      // Update user with staking info
       const stakeResponse = await fetch("/api/stake", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -273,219 +189,29 @@ export default function RegisterPage() {
         }),
       })
 
-      console.log("[Stake] /api/stake response status:", stakeResponse.status)
-      console.log("[Stake] /api/stake response ok:", stakeResponse.ok)
-      console.log("[Stake] /api/stake response headers:", {
-        contentType: stakeResponse.headers.get("content-type"),
-        statusText: stakeResponse.statusText,
-      })
-
       if (!stakeResponse.ok) {
-        try {
-          const data = await parseJSONResponse(stakeResponse)
-          console.error("[Stake] /api/stake error payload:", data)
-          await rollbackRegistration()
-          setError(
-            data.error ||
-              "Stake could not be recorded. Your account was not created, please try registering again."
-          )
-        } catch (parseError: any) {
-          console.error("[Stake] Failed to parse error response:", parseError)
-          // Try to get the raw response for debugging
-          try {
-            const clonedResponse = stakeResponse.clone()
-            const text = await clonedResponse.text()
-            console.error("[Stake] Raw error response:", text.substring(0, 500))
-          } catch (e) {
-            // Ignore if we can't clone
-          }
-          await rollbackRegistration()
-          setError(
-            parseError.message ||
-              "Stake could not be recorded. Please check server logs and try again."
-          )
-        }
+        await rollbackRegistration()
+        setError("Stake could not be recorded. Please try again.")
         setStep("form")
         setIsStaking(false)
         return
       }
 
-      // Parse the response to verify the data was saved
-      let stakeData
-      try {
-        stakeData = await parseJSONResponse(stakeResponse)
-        console.log("[Stake] /api/stake response data:", stakeData)
-      } catch (parseError: any) {
-        console.error("[Stake] Failed to parse success response:", parseError)
-        console.error("[Stake] Error details:", {
-          message: parseError.message,
-          stack: parseError.stack,
-        })
-        
-        // Even if parsing fails, the staking transaction was confirmed on-chain
-        // The database update might have succeeded even if response was malformed
-        // Proceed with login attempts - the retry logic will verify the data is in the database
-        console.log("[Stake] Proceeding with login despite parse error - staking was confirmed on-chain")
-        stakeData = null
-      }
-
-      // Verify the response contains the staking data
-      if (stakeData && stakeData.user?.walletAddress && stakeData.user?.stakeAmount && stakeData.user?.stakeTransactionHash) {
-        console.log("[Stake] Staking data confirmed in API response:", {
-          walletAddress: stakeData.user.walletAddress,
-          stakeAmount: stakeData.user.stakeAmount,
-          transactionHash: stakeData.user.stakeTransactionHash,
-        })
-      } else {
-        console.warn("[Stake] /api/stake response missing staking data:", stakeData)
-        // Even if response is invalid, staking was confirmed on-chain
-        // The database update might have succeeded even if response was malformed
-        // Proceed with login attempts - the retry logic will verify the data is in the database
-        console.log("[Stake] Proceeding with login despite invalid response - staking was confirmed on-chain, database update may have succeeded")
-      }
-
-      // Wait a moment for database to be fully synced across connections
-      // Give extra time for the update to be visible in subsequent queries
-      await new Promise((resolve) => setTimeout(resolve, 1500))
-
-      // Verify staking data is visible in database before attempting login
-      let stakingVerified = false
-      let verifyAttempts = 0
-      const maxVerifyAttempts = 5
-
-      console.log("[Stake] Verifying staking data is visible in database...")
-
-      while (verifyAttempts < maxVerifyAttempts && !stakingVerified) {
-        verifyAttempts++
-        try {
-          const verifyResponse = await fetch("/api/auth/check-staking", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              email: formData.email,
-              password: formData.password,
-            }),
-          })
-
-          let verifyData
-          try {
-            verifyData = await parseJSONResponse(verifyResponse)
-          } catch (parseError: any) {
-            console.error("[Stake] Failed to parse verify response:", parseError)
-            if (verifyAttempts < maxVerifyAttempts) {
-              await new Promise((resolve) => setTimeout(resolve, 800))
-              continue
-            }
-            break
-          }
-
-          if (verifyResponse.ok && verifyData.hasCompletedStaking) {
-            console.log("[Stake] Staking verified in database!")
-            stakingVerified = true
-            break
-          } else {
-            console.log(`[Stake] Staking not yet visible (verify attempt ${verifyAttempts}/${maxVerifyAttempts})`)
-            if (verifyAttempts < maxVerifyAttempts) {
-              await new Promise((resolve) => setTimeout(resolve, 800))
-            }
-          }
-        } catch (verifyError: any) {
-          console.error("[Stake] Error verifying staking:", verifyError)
-          if (verifyAttempts < maxVerifyAttempts) {
-            await new Promise((resolve) => setTimeout(resolve, 800))
-          }
-        }
-      }
-
-      if (!stakingVerified) {
-        console.warn("[Stake] Could not verify staking in database, but proceeding with login attempts")
-      } else {
-        // Small delay after verification to ensure database state is fully synced
-        await new Promise((resolve) => setTimeout(resolve, 500))
-      }
-
       // Auto-login after successful registration and staking
-      // Retry NextAuth login directly - it will check staking status internally
-      let loginSuccess = false
-      let loginAttempts = 0
-      const maxLoginAttempts = 8 // Increased attempts for better reliability
+      const loginResult = await signIn("credentials", {
+        email: formData.email,
+        password: formData.password,
+        redirect: false,
+      })
 
-      console.log("[Stake] Starting auto-login attempts after successful staking")
-
-      while (loginAttempts < maxLoginAttempts && !loginSuccess) {
-        loginAttempts++
-
-        try {
-          console.log(`[Stake] Login attempt ${loginAttempts}/${maxLoginAttempts}`)
-
-          // Directly attempt NextAuth login
-          // The authorize function will check staking status
-          const loginResult = await signIn("credentials", {
-            email: formData.email,
-            password: formData.password,
-            redirect: false,
-          })
-
-          console.log("[Stake] Login result:", loginResult)
-
-          // Check for success - NextAuth returns { error: null } or { error: undefined } on success
-          // CredentialsSignin means login failed - it's NOT success
-          const isSuccess = 
-            !loginResult?.error || 
-            loginResult?.error === null ||
-            loginResult?.error === undefined
-
-          if (isSuccess) {
-            // Login successful!
-            console.log("[Stake] Login successful! Result:", loginResult)
-            loginSuccess = true
-            break
-          } else {
-            // Login failed - could be staking not visible yet or other issue
-            console.log(`[Stake] Login failed (attempt ${loginAttempts}):`, loginResult.error)
-            
-            // Check if it's a staking-related error
-            const isStakingError = 
-              loginResult.error.includes("staking") || 
-              loginResult.error.includes("activate") ||
-              loginResult.error === "CredentialsSignin" // Generic error might mean staking check failed
-
-            if (isStakingError && loginAttempts < maxLoginAttempts) {
-              // Wait longer between attempts for database to sync
-              const waitTime = loginAttempts * 500 // Progressive backoff: 500ms, 1000ms, 1500ms...
-              console.log(`[Stake] Waiting ${waitTime}ms before retry...`)
-              await new Promise((resolve) => setTimeout(resolve, waitTime))
-              continue
-            } else if (!isStakingError) {
-              // Non-staking error, don't retry
-              console.error("[Stake] Non-staking login error, stopping retries")
-              break
-            }
-          }
-        } catch (loginError: any) {
-          console.error(`[Stake] Error during login attempt ${loginAttempts}:`, loginError)
-          if (loginAttempts < maxLoginAttempts) {
-            await new Promise((resolve) => setTimeout(resolve, 1000))
-            continue
-          }
-        }
-      }
-
-      if (loginSuccess) {
-        console.log("[Stake] Auto-login successful, redirecting to app")
+      if (!loginResult?.error) {
         setRegisteredUserId(null)
         setIsStaking(false)
         router.push("/")
         router.refresh()
       } else {
-        // Login failed after all retries
-        // The account and stake are saved, so user can login manually
-        console.warn("[Stake] Auto-login failed after all retries, redirecting to login page")
-        setError(
-          "Registration and stake completed successfully! Redirecting to login..."
-        )
+        setError("Registration and stake completed successfully! Redirecting to login...")
         setIsStaking(false)
-        // Redirect to login page after a short delay
         setTimeout(() => {
           router.push("/login")
         }, 2000)
@@ -493,27 +219,7 @@ export default function RegisterPage() {
     } catch (err: any) {
       console.error("[Stake] Error during stake flow:", err)
       await rollbackRegistration()
-
-      const msg = (err?.message || "").toString()
-
-      if (msg.includes("disconnected port object")) {
-        setError(
-          "Your wallet extension lost connection (disconnected port). Please fully reload the page, reopen your wallet, reconnect, and try staking again."
-        )
-      } else if (err?.name === "WalletSendTransactionError") {
-        console.error("[Stake] WalletSendTransactionError details:", {
-          message: err?.message,
-          logs: err?.logs,
-        })
-        setError(
-          "Wallet failed to send the stake transaction (simulation error). Make sure your wallet is on Devnet, you have enough SOL, and then try again."
-        )
-      } else {
-        setError(
-          err?.message ||
-            "Staking failed. Your account was not created, please try registering and staking again."
-        )
-      }
+      setError(err?.message || "Staking failed. Please try again.")
       setStep("form")
       setIsStaking(false)
     }
@@ -635,12 +341,6 @@ export default function RegisterPage() {
             animate={{ opacity: 1, x: 0 }}
             className="rounded-xl border border-border bg-card/50 p-6 backdrop-blur-sm"
           >
-            {/* Debug info */}
-            <div className="mb-4 p-2 bg-gray-800 rounded text-xs">
-              <p>Debug: Step = {step}</p>
-              <p>Connected = {connected ? 'true' : 'false'}</p>
-              <p>PublicKey = {publicKey?.toString() || 'null'}</p>
-            </div>
             {error && (
               <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
                 {error}
@@ -666,54 +366,8 @@ export default function RegisterPage() {
             </div>
 
             <div className="mb-6 space-y-4">
-              {/* Simple test button first */}
-              <Button
-                onClick={() => {
-                  console.log("[RegisterPage] Simple test button clicked")
-                  alert("Simple button works!")
-                }}
-                className="w-full justify-center border-green-500/50 font-semibold text-green-500 hover:bg-green-500/10 bg-transparent"
-              >
-                <Wallet className="mr-2 h-4 w-4" />
-                Simple Test Button
-              </Button>
-
-              {/* Simple wallet button that should always work */}
-              <div className="border border-blue-500/50 p-2 rounded">
-                <p className="text-xs text-blue-500 mb-2">Simple Wallet Button:</p>
-                <SimpleWalletButton />
-              </div>
-
-              {/* Try to render complex wallet button with error boundary */}
-              <div className="border border-yellow-500/50 p-2 rounded">
-                <p className="text-xs text-yellow-500 mb-2">Complex Wallet Button:</p>
-                <CustomWalletButton />
-              </div>
-              
-              {/* Manual wallet connection attempt */}
-              <Button
-                onClick={async () => {
-                  console.log("[RegisterPage] Manual wallet connection attempt")
-                  try {
-                    // Try to access wallet directly
-                    if (typeof window !== 'undefined' && (window as any).solana) {
-                      console.log("Found window.solana:", (window as any).solana)
-                      const resp = await (window as any).solana.connect()
-                      console.log("Direct connection result:", resp)
-                      alert(`Connected to: ${resp.publicKey.toString()}`)
-                    } else {
-                      alert("No Solana wallet found in window object")
-                    }
-                  } catch (err: any) {
-                    console.error("Manual connection error:", err)
-                    alert(`Connection error: ${err.message}`)
-                  }
-                }}
-                className="w-full justify-center border-purple-500/50 font-semibold text-purple-500 hover:bg-purple-500/10 bg-transparent"
-              >
-                <Wallet className="mr-2 h-4 w-4" />
-                Try Direct Phantom Connection
-              </Button>
+              <SimpleWalletButton />
+              <CustomWalletButton />
             </div>
 
             {connected && publicKey && (
@@ -779,4 +433,3 @@ export default function RegisterPage() {
     </div>
   )
 }
-
