@@ -80,7 +80,7 @@ flowchart TD
     B -->|Confidence < Threshold<br/>e.g., 0.75| D[Trigger Human RPC]
     
     D --> E[Calculate Consensus Parameters]
-    E --> F[Uncertainty Factor<br/>U = 1.0 - Certainty / 0.5<br/>Certainty range: 0.5 to 1.0]
+    E --> F["Uncertainty Factor U<br/>Certainty: 0.5 to 1.0<br/>Higher certainty = Lower U"]
     F --> G[Required Voters N = 3 to 15<br/>based on uncertainty]
     F --> H[Consensus Threshold T = 51% to 90%<br/>based on uncertainty]
     
