@@ -1,0 +1,15 @@
+{
+  "name": "x402-solana-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "cd main-app/human-rpc-app && pnpm install && pnpm prisma generate && pnpm run build",
+    "dev": "cd main-app/human-rpc-app && pnpm run dev",
+    "start": "cd main-app/human-rpc-app && pnpm run start"
+  },
+  "workspaces": [
+    "main-app/human-rpc-app",
+    "main-app/sdk",
+    "test-agent"
+  ]
+}
