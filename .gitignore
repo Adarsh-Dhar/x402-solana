@@ -2,6 +2,12 @@
 node_modules/
 /main-app/human-rpc-app/node_modules
 
+# Lock files (let Vercel generate fresh ones)
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+/main-app/human-rpc-app/pnpm-lock.yaml
+
 # Next.js
 .next/
 out/

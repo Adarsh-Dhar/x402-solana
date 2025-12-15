@@ -10,9 +10,9 @@ Vercel should automatically detect this as a Next.js project. Default settings s
 
 1. **Framework Preset**: Next.js (auto-detected)
 2. **Root Directory**: Leave empty (root)
-3. **Build Command**: `pnpm run build` (auto-detected)
+3. **Build Command**: `npm run build` (auto-detected)
 4. **Output Directory**: Leave empty (default `.next`)
-5. **Install Command**: `pnpm install` (auto-detected)
+5. **Install Command**: `npm install` (auto-detected)
 
 ### Required Environment Variables
 
