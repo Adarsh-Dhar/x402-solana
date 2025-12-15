@@ -11,20 +11,25 @@ import { Label } from "@/components/ui/label"
 import { useWallet } from "@solana/wallet-adapter-react"
 import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js"
 import { CustomWalletButton } from "@/components/custom-wallet-button"
+import { SimpleWalletButton } from "@/components/simple-wallet-button"
 import { stakeWithProgram } from "@/lib/solanaStaking"
 
 const STAKE_AMOUNT_SOL = 0.01 // 0.01 SOL stake for devnet
 const STAKE_AMOUNT_LAMPORTS = Math.round(STAKE_AMOUNT_SOL * LAMPORTS_PER_SOL)
 
 export default function RegisterPage() {
+  console.log("[RegisterPage] COMPONENT STARTING TO RENDER")
+  
   if (typeof window !== "undefined") {
-    console.log("[Register] Component render", {
+    console.log("[RegisterPage] Client-side render", {
       path: window.location.pathname,
       rpcUrl: process.env.NEXT_PUBLIC_SOLANA_RPC_URL,
       stakingWallet: process.env.NEXT_PUBLIC_STAKING_WALLET,
       stakeMint: process.env.NEXT_PUBLIC_STAKE_MINT,
       nodeEnv: process.env.NODE_ENV,
     })
+  } else {
+    console.log("[RegisterPage] Server-side render")
   }
   const router = useRouter()
   const wallet = useWallet()
@@ -437,6 +442,8 @@ export default function RegisterPage() {
     }
   }
 
+  console.log("[RegisterPage] ABOUT TO RETURN JSX", { step, connected, publicKey: publicKey?.toString() })
+
   return (
     <div className="flex min-h-screen items-center justify-center px-4 py-12">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="w-full max-w-md">
@@ -551,6 +558,12 @@ export default function RegisterPage() {
             animate={{ opacity: 1, x: 0 }}
             className="rounded-xl border border-border bg-card/50 p-6 backdrop-blur-sm"
           >
+            {/* Debug info */}
+            <div className="mb-4 p-2 bg-gray-800 rounded text-xs">
+              <p>Debug: Step = {step}</p>
+              <p>Connected = {connected ? 'true' : 'false'}</p>
+              <p>PublicKey = {publicKey?.toString() || 'null'}</p>
+            </div>
             {error && (
               <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
                 {error}
@@ -576,18 +589,53 @@ export default function RegisterPage() {
             </div>
 
             <div className="mb-6 space-y-4">
-              <CustomWalletButton />
-              
-              {/* Fallback test button */}
+              {/* Simple test button first */}
               <Button
                 onClick={() => {
-                  console.log("[RegisterPage] Fallback button clicked")
-                  alert("Fallback button works! This means the issue is with wallet adapter.")
+                  console.log("[RegisterPage] Simple test button clicked")
+                  alert("Simple button works!")
                 }}
-                className="w-full justify-center border-orange-500/50 font-semibold text-orange-500 hover:bg-orange-500/10 bg-transparent"
+                className="w-full justify-center border-green-500/50 font-semibold text-green-500 hover:bg-green-500/10 bg-transparent"
               >
                 <Wallet className="mr-2 h-4 w-4" />
-                Test Button (Should Always Work)
+                Simple Test Button
+              </Button>
+
+              {/* Simple wallet button that should always work */}
+              <div className="border border-blue-500/50 p-2 rounded">
+                <p className="text-xs text-blue-500 mb-2">Simple Wallet Button:</p>
+                <SimpleWalletButton />
+              </div>
+
+              {/* Try to render complex wallet button with error boundary */}
+              <div className="border border-yellow-500/50 p-2 rounded">
+                <p className="text-xs text-yellow-500 mb-2">Complex Wallet Button:</p>
+                <CustomWalletButton />
+              </div>
+              
+              {/* Manual wallet connection attempt */}
+              <Button
+                onClick={async () => {
+                  console.log("[RegisterPage] Manual wallet connection attempt")
+                  try {
+                    // Try to access wallet directly
+                    if (typeof window !== 'undefined' && (window as any).solana) {
+                      console.log("Found window.solana:", (window as any).solana)
+                      const resp = await (window as any).solana.connect()
+                      console.log("Direct connection result:", resp)
+                      alert(`Connected to: ${resp.publicKey.toString()}`)
+                    } else {
+                      alert("No Solana wallet found in window object")
+                    }
+                  } catch (err: any) {
+                    console.error("Manual connection error:", err)
+                    alert(`Connection error: ${err.message}`)
+                  }
+                }}
+                className="w-full justify-center border-purple-500/50 font-semibold text-purple-500 hover:bg-purple-500/10 bg-transparent"
+              >
+                <Wallet className="mr-2 h-4 w-4" />
+                Try Direct Phantom Connection
               </Button>
             </div>
 
