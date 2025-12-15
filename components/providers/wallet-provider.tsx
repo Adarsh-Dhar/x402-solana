@@ -15,7 +15,10 @@ import {
 import "@solana/wallet-adapter-react-ui/styles.css"
 
 export function SolanaWalletProvider({ children }: { children: ReactNode }) {
-  const network = WalletAdapterNetwork.Devnet
+  // Use mainnet for production, devnet for development
+  const network = process.env.NODE_ENV === 'production' 
+    ? WalletAdapterNetwork.Mainnet 
+    : WalletAdapterNetwork.Devnet
 
   const endpoint = useMemo(
     () => process.env.NEXT_PUBLIC_SOLANA_RPC_URL || clusterApiUrl(network),
