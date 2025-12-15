@@ -18,19 +18,42 @@ const STAKE_AMOUNT_LAMPORTS = STAKE_AMOUNT_SOL * LAMPORTS_PER_SOL
 
 // Simple wallet button component
 function SimpleWalletButton() {
+  console.log("[SimpleWalletButton] Rendering wallet button")
   return (
-    <WalletMultiButton className="w-full" />
+    <div className="space-y-2">
+      <p className="text-sm text-muted-foreground">Solana Wallet Adapter Button:</p>
+      <WalletMultiButton className="w-full !bg-purple-600 hover:!bg-purple-700" />
+    </div>
   )
 }
 
 // Custom wallet button component
 function CustomWalletButton() {
-  const { connected, publicKey } = useWallet()
+  const wallet = useWallet()
+  const { connected, publicKey, wallets, select } = wallet
+  
+  console.log("[CustomWalletButton] Wallet state:", { connected, publicKey: publicKey?.toString(), walletsCount: wallets.length })
   
   return (
-    <div className="text-xs">
-      <p>Connected: {connected ? 'Yes' : 'No'}</p>
-      <p>Key: {publicKey?.toString().slice(0, 20) || 'None'}...</p>
+    <div className="space-y-2 p-3 border border-blue-500/50 rounded bg-blue-500/5">
+      <p className="text-sm text-blue-400 font-semibold">Debug Wallet Info:</p>
+      <div className="text-xs space-y-1">
+        <p>Connected: {connected ? 'Yes' : 'No'}</p>
+        <p>Key: {publicKey?.toString().slice(0, 20) || 'None'}...</p>
+        <p>Available Wallets: {wallets.length}</p>
+        <p>Wallet Names: {wallets.map(w => w.adapter.name).join(', ')}</p>
+      </div>
+      {wallets.length > 0 && !connected && (
+        <Button
+          onClick={() => {
+            console.log("[CustomWalletButton] Attempting to select first wallet:", wallets[0].adapter.name)
+            select(wallets[0].adapter.name)
+          }}
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs"
+        >
+          Connect {wallets[0]?.adapter.name || 'Wallet'}
+        </Button>
+      )}
     </div>
   )
 }
@@ -46,7 +69,7 @@ export default function RegisterPage() {
   console.log("[RegisterPage] SIMPLE VERSION STARTING TO RENDER")
   
   const router = useRouter()
-  const [step, setStep] = useState<"form" | "stake">("form")
+  const [step, setStep] = useState<"form" | "stake">("stake")
   const [isLoading, setIsLoading] = useState(false)
   const [isStaking, setIsStaking] = useState(false)
   const [isRollingBack, setIsRollingBack] = useState(false)
@@ -368,6 +391,34 @@ export default function RegisterPage() {
             <div className="mb-6 space-y-4">
               <SimpleWalletButton />
               <CustomWalletButton />
+              
+              {/* Manual Phantom connection */}
+              <div className="space-y-2 p-3 border border-green-500/50 rounded bg-green-500/5">
+                <p className="text-sm text-green-400 font-semibold">Direct Phantom Connection:</p>
+                <Button
+                  onClick={async () => {
+                    console.log("[DirectPhantom] Attempting direct Phantom connection")
+                    try {
+                      if (typeof window !== 'undefined' && (window as any).solana) {
+                        console.log("Found window.solana:", (window as any).solana)
+                        const resp = await (window as any).solana.connect()
+                        console.log("Direct connection result:", resp)
+                        alert(`Connected to: ${resp.publicKey.toString()}`)
+                      } else {
+                        console.log("No window.solana found")
+                        alert("No Solana wallet found. Please install Phantom wallet.")
+                      }
+                    } catch (err: any) {
+                      console.error("Direct connection error:", err)
+                      alert(`Connection error: ${err.message}`)
+                    }
+                  }}
+                  className="w-full bg-green-600 hover:bg-green-700 text-white"
+                >
+                  <Wallet className="mr-2 h-4 w-4" />
+                  Connect Phantom Directly
+                </Button>
+              </div>
             </div>
 
             {connected && publicKey && (
