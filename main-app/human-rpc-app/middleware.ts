@@ -1,14 +1,7 @@
 import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
-import { getToken } from "next-auth/jwt"
 
 export async function middleware(request: NextRequest) {
-  // Use the same secret as Auth.js (`AUTH_SECRET` preferred, fallback to `NEXTAUTH_SECRET`)
-  const token = await getToken({
-    req: request,
-    secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET,
-  })
-
   const { pathname } = request.nextUrl
 
   // Public routes that don't require authentication
@@ -20,8 +13,11 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // Check for session cookie (simplified auth check for Edge Runtime)
+  const sessionToken = request.cookies.get("next-auth.session-token") || request.cookies.get("__Secure-next-auth.session-token")
+  
   // If not authenticated and trying to access protected route, redirect to login
-  if (!token) {
+  if (!sessionToken) {
     const loginUrl = new URL("/login", request.url)
     loginUrl.searchParams.set("callbackUrl", pathname)
     return NextResponse.redirect(loginUrl)
@@ -42,4 +38,7 @@ export const config = {
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 }
+
+// Explicitly use Edge Runtime
+export const runtime = 'edge'
 
