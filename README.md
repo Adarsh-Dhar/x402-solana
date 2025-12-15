@@ -29,7 +29,7 @@ flowchart TD
     B -->|402 Payment Required| D[Parse Payment Invoice]
     
     D --> E[Extract Payment Details]
-    E --> F[Currency: SOL/USDC<br/>Amount: Lamports SOL or Token Units USDC<br/>Recipient Address<br/>Network]
+    E --> F[Currency: SOL/USDC<br/>Amount in lamports or token units<br/>Recipient Address<br/>Network]
     
     F --> G[Check Wallet Balance]
     G -->|Insufficient Funds| H[Error: Fund Wallet]
@@ -80,7 +80,7 @@ flowchart TD
     B -->|Confidence < Threshold<br/>e.g., 0.75| D[Trigger Human RPC]
     
     D --> E[Calculate Consensus Parameters]
-    E --> F[Uncertainty Factor U = 1.0 - Certainty ÷ 0.5]
+    E --> F[Uncertainty Factor<br/>U = 1.0 - Certainty ÷ 0.5<br/>Certainty range: 0.5 to 1.0]
     F --> G[Required Voters N = 3 to 15<br/>based on uncertainty]
     F --> H[Consensus Threshold T = 51% to 90%<br/>based on uncertainty]
     
@@ -131,9 +131,11 @@ flowchart TD
 1. **Confidence Evaluation**: After AI analysis, confidence is compared against threshold (default 0.9)
 
 2. **Dynamic Parameter Calculation**:
-   - **Uncertainty Factor (U)**: Calculated as `(1.0 - Certainty) / 0.5`, measuring AI's uncertainty level
+   - **Uncertainty Factor (U)**: Calculated as `(1.0 - Certainty) / 0.5` for AI certainty in range [0.5, 1.0]
      - When AI is 100% certain (1.0): U = 0.0 (no uncertainty)
+     - When AI is 75% certain (0.75): U = 0.5 (moderate uncertainty)
      - When AI is 50% certain (0.5): U = 1.0 (maximum uncertainty)
+     - Note: Certainty values below 0.5 are treated as 0.5 (complete uncertainty)
    - **Required Voters (N)**: Scales from 3 voters (high certainty) to 15 voters (low certainty)
    - **Consensus Threshold (T)**: Scales from 51% (simple majority) to 90% (super-majority)
 
