@@ -58,6 +58,7 @@ export function SolanaWalletProvider({ children }: { children: ReactNode }) {
         endpoint,
         network,
         wallets: wallets.map((w) => w.name),
+        walletsLength: wallets.length,
       })
 
       // Restore console.warn after a delay

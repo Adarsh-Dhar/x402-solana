@@ -9,8 +9,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useWallet } from "@solana/wallet-adapter-react"
-import { WalletMultiButton } from "@solana/wallet-adapter-react-ui"
 import { Connection, LAMPORTS_PER_SOL } from "@solana/web3.js"
+import { CustomWalletButton } from "@/components/custom-wallet-button"
 import { stakeWithProgram } from "@/lib/solanaStaking"
 
 const STAKE_AMOUNT_SOL = 0.01 // 0.01 SOL stake for devnet
@@ -572,10 +572,7 @@ export default function RegisterPage() {
             </div>
 
             <div className="mb-6">
-              <WalletMultiButton className="w-full justify-center border-[var(--solana-purple)]/50 font-semibold text-[var(--solana-purple)] hover:bg-[var(--solana-purple)]/10 bg-transparent !rounded-lg !border !bg-transparent !text-[var(--solana-purple)]">
-                <Wallet className="mr-2 h-4 w-4" />
-                {connected ? "Wallet Connected" : "Connect Wallet"}
-              </WalletMultiButton>
+              <CustomWalletButton />
             </div>
 
             {connected && publicKey && (
