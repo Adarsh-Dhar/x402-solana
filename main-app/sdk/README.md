@@ -8,6 +8,97 @@ Autonomous Payment Agent SDK for Solana x402 protocol. Automatically handles 402
 pip install human-rpc-sdk
 ```
 
+## How It Works
+
+### Autonomous Payment Workflow
+
+The SDK provides intelligent, automated payment handling for x402 protocol responses:
+
+```mermaid
+flowchart TD
+    A[Start: HTTP Request] --> B{Response Status}
+    B -->|200 OK| C[Return Content]
+    B -->|402 Payment Required| D[Parse Payment Invoice]
+    
+    D --> E[Extract Payment Details]
+    E --> F[Currency: SOL/USDC<br/>Amount in Lamports<br/>Recipient Address<br/>Network]
+    
+    F --> G[Check Wallet Balance]
+    G -->|Insufficient Funds| H[Error: Fund Wallet]
+    G -->|Sufficient Funds| I[Build Solana Transaction]
+    
+    I --> J[Sign Transaction<br/>with Private Key]
+    J --> K[Serialize & Encode<br/>Transaction]
+    K --> L[Create X-PAYMENT Header]
+    
+    L --> M[Retry Request<br/>with Payment Header]
+    M --> N{Payment Verified?}
+    
+    N -->|Yes| O[Return Unlocked Content]
+    N -->|No| P[Payment Verification Failed]
+    
+    style A fill:#e1f5ff
+    style C fill:#d4edda
+    style O fill:#d4edda
+    style H fill:#f8d7da
+    style P fill:#f8d7da
+    style D fill:#fff3cd
+    style I fill:#cfe2ff
+    style M fill:#cfe2ff
+```
+
+**Payment Flow:**
+
+1. **Request**: You make a normal HTTP request using `agent.get()` or `agent.post()`
+2. **402 Detection**: If the server responds with `402 Payment Required`, the SDK automatically:
+   - Parses the payment invoice
+   - Builds a Solana transaction (SOL or USDC)
+   - Signs and encodes the transaction
+   - Adds it to the `X-PAYMENT` header
+   - Retries the request automatically
+3. **Success**: Your request completes with the unlocked content
+
+### Human RPC Integration with Confidence Thresholds
+
+When AI confidence falls below a configurable threshold, the SDK can automatically request human verification:
+
+```mermaid
+flowchart TD
+    A[AI Analysis] --> B{Confidence Check}
+    B -->|Confidence ≥ Threshold<br/>Default: 0.9| C[Return AI Result]
+    B -->|Confidence < Threshold| D[Call Human RPC API]
+    
+    D --> E[Create Task with Context]
+    E --> F[Automatic 402 Payment<br/>for Task Creation]
+    
+    F --> G[Poll Task Status]
+    G --> H{Task Complete?}
+    H -->|No| G
+    H -->|Yes| I{Consensus Result}
+    
+    I -->|Positive| J[Return Human Verdict]
+    I -->|Negative & Reiterator ON| K[Retry AI Analysis]
+    I -->|Negative & Reiterator OFF| L[Return with Error]
+    
+    K --> A
+    
+    style A fill:#e1f5ff
+    style C fill:#d4edda
+    style D fill:#fff3cd
+    style J fill:#d4edda
+    style L fill:#f8d7da
+    style K fill:#ffc107
+```
+
+**Confidence-Based Decision Flow:**
+
+- **High Confidence (≥ threshold)**: AI result returned immediately without human verification
+- **Low Confidence (< threshold)**: Human RPC automatically invoked for consensus validation
+- **Reiterator Mode**: Optional automatic retry with adjusted parameters if consensus is negative
+- **Integrated Analysis**: Seamlessly combines AI speed with human accuracy when needed
+
+---
+
 ## Quickstart
 
 ### 1. Set Environment Variables
