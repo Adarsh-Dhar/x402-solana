@@ -21,7 +21,7 @@ flowchart TD
     B -->|402 Payment Required| D[Parse Payment Invoice]
     
     D --> E[Extract Payment Details]
-    E --> F[Currency: SOL/USDC<br/>Amount in Lamports<br/>Recipient Address<br/>Network]
+    E --> F[Currency: SOL/USDC<br/>Amount: Lamports SOL or Token Units USDC<br/>Recipient Address<br/>Network]
     
     F --> G[Check Wallet Balance]
     G -->|Insufficient Funds| H[Error: Fund Wallet]
