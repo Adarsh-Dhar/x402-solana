@@ -2,7 +2,7 @@
 
 ## Vercel Deployment
 
-The Next.js app has been moved to the root directory for easier deployment.
+The Next.js app has been moved to the root directory for easier deployment. Updated to Next.js 15.1.6 to resolve security vulnerabilities.
 
 ### Vercel Project Configuration
 
