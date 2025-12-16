@@ -447,8 +447,7 @@ export default function TaskDetails({ task, onBack }: TaskDetailsProps) {
             )}
 
             <p className="mt-6 text-center text-xs text-muted-foreground">
-              Your stake: <span className="text-[var(--solana-purple)]">$20.00</span> at risk if you disagree with
-              consensus
+              Your stake at risk if you disagree with consensus
             </p>
           </div>
         </motion.div>

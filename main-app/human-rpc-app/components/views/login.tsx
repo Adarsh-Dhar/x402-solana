@@ -103,7 +103,7 @@ export default function Login({ onLogin, onRegister }: LoginProps) {
 
             <h2 className="mb-4 text-xl font-semibold text-foreground">Become a Member</h2>
             <p className="mb-6 text-muted-foreground">
-              Join the Human RPC network. Stake $20 SOL to participate in AI consensus decisions and earn rewards.
+              Join the Human RPC network. Stake SOL to participate in AI consensus decisions and earn rewards.
             </p>
 
             <div className="mb-6 space-y-3">

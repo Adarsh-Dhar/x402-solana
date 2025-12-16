@@ -1,12 +1,10 @@
 import { NextResponse } from "next/server"
 import { Connection, PublicKey, LAMPORTS_PER_SOL } from "@solana/web3.js"
+import { STAKE_AMOUNT_SOL, STAKE_AMOUNT_LAMPORTS } from "@/lib/stake-config"
 
 // Ensure this route always returns JSON, not HTML error pages
 export const dynamic = "force-dynamic"
 export const runtime = "nodejs"
-
-const STAKE_AMOUNT_SOL = 0.01 // 0.01 SOL stake for devnet
-const STAKE_AMOUNT_LAMPORTS = STAKE_AMOUNT_SOL * LAMPORTS_PER_SOL
 
 // This should be your staking wallet address
 const STAKING_WALLET =
